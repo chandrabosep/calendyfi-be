@@ -1,0 +1,75 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider     = "postgresql"
+  url          = env("DATABASE_URL")
+  directUrl    = env("DIRECT_URL")
+  relationMode = "prisma"
+}
+
+// User model for authentication
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  avatar    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Google OAuth
+  googleId          String?   @unique
+  accessToken       String?
+  refreshToken      String?
+  accessTokenExpiry DateTime?
+
+  // Relations
+  events  Event[]
+  wallets Wallet[]
+
+  @@map("users")
+}
+
+// Calendar events
+model Event {
+  id          String   @id @default(cuid())
+  googleId    String?  @unique // Google Calendar event ID
+  title       String
+  description String?
+  startTime   DateTime
+  endTime     DateTime
+  location    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // AI Processing
+  rawInput         String? // Original user input
+  aiProcessed      Boolean @default(false)
+  confidence       Float?
+  suggestedChanges Json?
+
+  // User relation
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("events")
+}
+
+// Basic wallet model - will be expanded later
+model Wallet {
+  id      String @id @default(cuid())
+  userId  String @unique
+  address String
+  status  String @default("PENDING")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("wallets")
+}

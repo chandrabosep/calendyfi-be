@@ -6,7 +6,7 @@
 	"scripts": {
 		"build": "tsc",
 		"start": "node dist/src/server.js",
-		"dev": "ts-node src/server.ts",
+		"dev": "nodemon --exec ts-node src/server.ts",
 		"test": "jest"
 	},
 	"keywords": [
@@ -16,5 +16,18 @@
 		"agent"
 	],
 	"author": "Hackathon Team",
-	"license": "MIT"
+	"license": "MIT",
+	"dependencies": {
+		"cors": "^2.8.5",
+		"dotenv": "^17.2.2",
+		"express": "^5.1.0"
+	},
+	"devDependencies": {
+		"@types/cors": "^2.8.19",
+		"@types/express": "^5.0.3",
+		"@types/node": "^24.5.2",
+		"nodemon": "^3.1.10",
+		"ts-node": "^10.9.2",
+		"typescript": "^5.9.2"
+	}
 }

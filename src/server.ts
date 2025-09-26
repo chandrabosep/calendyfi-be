@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import authRoutes from "./api/auth";
+import calendarRoutes from "./api/calendar";
 
 // Load environment variables
 dotenv.config();
@@ -15,6 +16,7 @@ app.use(express.json());
 
 // API Routes
 app.use("/api/auth", authRoutes);
+app.use("/api/calendar", calendarRoutes);
 
 // Basic health check
 app.get("/health", (req, res) => {

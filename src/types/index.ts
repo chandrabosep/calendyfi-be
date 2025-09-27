@@ -59,14 +59,6 @@ export interface WebhookPayload {
 	body: any;
 }
 
-// API Response Types
-export interface ApiResponse<T = any> {
-	success: boolean;
-	data?: T;
-	error?: string;
-	message?: string;
-}
-
 // Application Types
 export interface CalendarEventData {
 	googleEventId: string;
@@ -88,6 +80,93 @@ export interface UserSession {
 	tokenExpiry: Date;
 }
 
+// API Response Types
+export interface ApiResponse<T = any> {
+	success: boolean;
+	data?: T;
+	error?: string;
+	message?: string;
+}
+
+// AI Command Parsing Types
+export interface ParsedAiCommand {
+	intent: AiIntent;
+	action: AiAction;
+	parameters: AiParameters;
+	confidence: number;
+	rawText: string;
+	userId: string;
+	eventId?: string;
+	scheduledTime?: Date;
+}
+
+export interface AiIntent {
+	type:
+		| "payment"
+		| "transfer"
+		| "swap"
+		| "defi"
+		| "stake"
+		| "deposit"
+		| "split"
+		| "unknown";
+	description: string;
+}
+
+export interface AiAction {
+	type:
+		| "send"
+		| "pay"
+		| "swap"
+		| "stake"
+		| "deposit"
+		| "split"
+		| "convert"
+		| "unknown";
+	description: string;
+}
+
+export interface AiParameters {
+	amount?: {
+		value: number;
+		currency: string;
+		unit?: string;
+	};
+	recipient?: {
+		address?: string;
+		ens?: string;
+		username?: string;
+		chain?: string;
+	};
+	fromToken?: string;
+	toToken?: string;
+	protocol?: string;
+	chain?: string;
+	participants?: string[];
+	splitAmount?: number;
+	pool?: string;
+	platform?: string;
+}
+
+export interface GeminiApiResponse {
+	success: boolean;
+	parsedCommand?: ParsedAiCommand;
+	error?: string;
+}
+
+// Configuration Types
+export interface ChainConfig {
+	chainId: number;
+	name: string;
+	rpcUrl: string;
+	deployerPrivateKey: string;
+	safeSupported?: boolean; // Whether Safe Protocol Kit supports this chain
+	safeProxyFactory?: string;
+	safeMasterCopy?: string;
+	fallbackHandler?: string;
+	paymentToken?: string;
+}
+
 export interface AppConfig {
 	port: number;
 	nodeEnv: string;
@@ -98,4 +177,6 @@ export interface AppConfig {
 	encryptionKey: string;
 	webhookSecret: string;
 	geminiApiKey: string;
+	chains: ChainConfig[];
+	defaultChainId: number;
 }

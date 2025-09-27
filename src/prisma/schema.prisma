@@ -9,10 +9,8 @@ generator client {
 }
 
 datasource db {
-  provider     = "postgresql"
-  url          = env("DATABASE_URL")
-  directUrl    = env("DIRECT_URL")
-  relationMode = "prisma"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 // User model for authentication
@@ -62,14 +60,27 @@ model Event {
   @@map("events")
 }
 
-// Basic wallet model - will be expanded later
+// Enhanced wallet model for Privy + Safe integration
 model Wallet {
-  id      String @id @default(cuid())
-  userId  String @unique
-  address String
-  status  String @default("PENDING")
+  id            String       @id @default(cuid())
+  userId        String       @unique
+  privyWallet   String // user's Privy wallet address (0x...)
+  privyWalletId String? // optional Privy wallet id for user
+  agentWalletId String // Privy wallet id for backend/agent EOA
+  agentAddress  String // 0x... agent EOA address (Privy created)
+  smartAccount  String? // Safe contract (AA) address
+  chainId       Int          @default(11155111)
+  status        WalletStatus @default(ACTIVE)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("wallets")
+}
+
+enum WalletStatus {
+  ACTIVE
+  REVOKED
+  PENDING
 }

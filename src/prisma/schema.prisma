@@ -1,82 +1,116 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider     = "postgresql"
+  url          = env("DATABASE_URL")
+  directUrl    = env("DIRECT_URL")
+  relationMode = "prisma"
 }
 
-// User model for authentication
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  name      String?
-  avatar    String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  // Google OAuth
-  googleId          String?   @unique
-  accessToken       String?
-  refreshToken      String?
-  accessTokenExpiry DateTime?
-
-  // Relations
-  events  Event[]
-  wallets Wallet[]
+  id              String           @id @default(cuid())
+  email           String           @unique
+  name            String?
+  googleId        String           @unique
+  refreshToken    String
+  accessToken     String?
+  tokenExpiry     DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  events          CalendarEvent[]
+  webhookChannels WebhookChannel[]
 
   @@map("users")
 }
 
-// Calendar events
-model Event {
-  id          String   @id @default(cuid())
-  googleId    String?  @unique // Google Calendar event ID
-  title       String
-  description String?
-  startTime   DateTime
-  endTime     DateTime
-  location    String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+model CalendarEvent {
+  id                  String    @id @default(cuid())
+  googleEventId       String    @unique
+  userId              String
+  calendarId          String
+  title               String
+  description         String?
+  startTime           DateTime
+  endTime             DateTime
+  location            String?
+  attendees           Json?
+  isAiEvent           Boolean   @default(false)
+  parsedIntent        String?
+  parsedAction        String?
+  parsedAmount        Json?
+  parsedRecipient     Json?
+  parsedFromToken     String?
+  parsedToToken       String?
+  parsedProtocol      String?
+  parsedChain         String?
+  parsedParticipants  Json?
+  parsedPool          String?
+  parsedPlatform      String?
+  parsedConfidence    Float?
+  parsedScheduledTime DateTime?
+  parsedCommandRaw    Json?
+  isExecuted          Boolean   @default(false)
+  executionHash       String?
+  executedAt          DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  // AI Processing
-  rawInput         String? // Original user input
-  aiProcessed      Boolean @default(false)
-  confidence       Float?
-  suggestedChanges Json?
-
-  // User relation
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@map("events")
+  @@map("calendar_events")
 }
 
-// Enhanced wallet model for Privy + Safe integration
-model Wallet {
-  id            String       @id @default(cuid())
-  userId        String       @unique
-  privyWallet   String // user's Privy wallet address (0x...)
-  privyWalletId String? // optional Privy wallet id for user
-  agentWalletId String // Privy wallet id for backend/agent EOA
-  agentAddress  String // 0x... agent EOA address (Privy created)
-  smartAccount  String? // Safe contract (AA) address
-  chainId       Int          @default(11155111)
-  status        WalletStatus @default(ACTIVE)
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
+model WebhookChannel {
+  id         String   @id @default(cuid())
+  userId     String
+  channelId  String   @unique
+  resourceId String
+  expiration DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@map("webhook_channels")
+}
+
+model Wallet {
+  id            String        @id @default(cuid())
+  userId        String        @unique
+  privyWallet   String
+  privyWalletId String?
+  agentWalletId String        @unique
+  agentAddress  String
+  status        WalletStatus  @default(ACTIVE)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  walletChains  WalletChain[]
 
   @@map("wallets")
+}
+
+model WalletChain {
+  id           String       @id @default(cuid())
+  walletId     String
+  chainId      Int
+  smartAccount String?
+  status       WalletStatus @default(ACTIVE)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  wallet       Wallet       @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@unique([walletId, chainId])
+  @@map("wallet_chains")
+}
+
+model AgentWalletKey {
+  id                  String   @id @default(cuid())
+  walletId            String   @unique
+  encryptedPrivateKey String
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@map("agent_wallet_keys")
 }
 
 enum WalletStatus {

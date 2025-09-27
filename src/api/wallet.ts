@@ -4,9 +4,9 @@ import { PrivyService } from "../services/wallet/privy-service";
 import { SafeService } from "../services/wallet/safe-service";
 import { CustomSmartAccountService } from "../services/wallet/custom-smart-account-service";
 import Joi from "joi";
+import rateLimit from "express-rate-limit";
 import { ApiResponse } from "../types";
 import { config } from "../config";
-import rateLimit from "express-rate-limit";
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -50,7 +50,7 @@ const revokeSchema = Joi.object({
 
 // Rate limiting for wallet operations
 const walletCreationLimit = rateLimit({
-	windowMs: 1 * 60 * 1000, // 15 minutes
+	windowMs: 15 * 60 * 1000, // 15 minutes
 	max: 1, // 1 wallet creation per user per 15 minutes
 	keyGenerator: (req) => req.body["userId"],
 	message: {
@@ -107,7 +107,7 @@ router.post("/onboard", walletCreationLimit, async (req, res) => {
 				} as ApiResponse);
 			}
 			internalUserId = user.id;
-			console.log("Mapped Privy user ID to internal user ID", {
+			console.info("Mapped Privy user ID to internal user ID", {
 				privyUserId: userId,
 				internalUserId: user.id,
 				email,
@@ -151,7 +151,7 @@ router.post("/onboard", walletCreationLimit, async (req, res) => {
 			} as ApiResponse);
 		}
 
-		console.log("Starting wallet onboarding", {
+		console.info("Starting wallet onboarding", {
 			userId: internalUserId,
 			privyWalletAddress,
 			chainsToDeploy,
@@ -159,7 +159,7 @@ router.post("/onboard", walletCreationLimit, async (req, res) => {
 
 		// 1. Create agent EOA
 		const agent = await privyService.createAgentWallet();
-		console.log("Agent wallet created", { agentAddress: agent.address });
+		console.info("Agent wallet created", { agentAddress: agent.address });
 
 		// 2. Deploy smart accounts on each chain (Safe or Custom)
 		const deployedSafes: Array<{ chainId: number; safeAddress: string }> =
@@ -190,7 +190,7 @@ router.post("/onboard", walletCreationLimit, async (req, res) => {
 						[agent.address, privyWalletAddress],
 						1
 					);
-					console.log("Safe deployed on chain", {
+					console.info("Safe deployed on chain", {
 						chainId,
 						safeAddress: smartAccountAddress,
 					});
@@ -202,7 +202,7 @@ router.post("/onboard", walletCreationLimit, async (req, res) => {
 							[agent.address, privyWalletAddress],
 							1
 						);
-					console.log("Custom smart account deployed on chain", {
+					console.info("Custom smart account deployed on chain", {
 						chainId,
 						smartAccountAddress,
 					});
@@ -226,7 +226,7 @@ router.post("/onboard", walletCreationLimit, async (req, res) => {
 				});
 
 				// Continue with other chains even if one fails
-				console.log("Continuing deployment on remaining chains", {
+				console.info("Continuing deployment on remaining chains", {
 					remainingChains: uniqueChainsToDeploy.filter(
 						(id) => id !== chainId
 					),
@@ -235,7 +235,7 @@ router.post("/onboard", walletCreationLimit, async (req, res) => {
 		}
 
 		// Log deployment summary
-		console.log("Deployment summary", {
+		console.info("Deployment summary", {
 			successful: deployedSafes.length,
 			failed: failedChains.length,
 			successfulChains: deployedSafes.map((s) => s.chainId),
@@ -277,7 +277,7 @@ router.post("/onboard", walletCreationLimit, async (req, res) => {
 			},
 		});
 
-		console.log("Wallet onboarding completed successfully", {
+		console.info("Wallet onboarding completed successfully", {
 			userId: internalUserId,
 			walletId: walletRecord.id,
 			deployedSafes: deployedSafes,
@@ -416,6 +416,366 @@ router.get("/status", walletOperationLimit, async (req, res) => {
 });
 
 /**
+ * Execute transaction via agent (internal use)
+ */
+router.post("/execute", walletOperationLimit, async (req, res) => {
+	try {
+		// Validate input
+		const { error, value } = executeSchema.validate(req.body);
+		if (error) {
+			console.warn("Invalid execute request", { error: error.details });
+			return res.status(400).json({
+				success: false,
+				error: "Invalid input data",
+				details: error.details[0]?.message || "Validation error",
+			} as ApiResponse);
+		}
+
+		const { userId, chainId, transactions } = value as {
+			userId: string;
+			chainId: number;
+			transactions: Array<{
+				to: string;
+				value: string;
+				data: string;
+			}>;
+		};
+
+		const wallet = await prisma.wallet.findUnique({
+			where: { userId },
+			include: {
+				walletChains: {
+					where: { chainId, status: "ACTIVE" },
+				},
+			},
+		});
+
+		if (!wallet || wallet.status !== "ACTIVE") {
+			console.warn("Active wallet not found", {
+				userId,
+				walletStatus: wallet?.status,
+			});
+			return res.status(404).json({
+				success: false,
+				error: "Active wallet not found",
+			} as ApiResponse);
+		}
+
+		const walletChain = wallet.walletChains[0];
+		if (!walletChain || !walletChain.smartAccount) {
+			console.warn("Active wallet chain not found", {
+				userId,
+				chainId,
+			});
+			return res.status(404).json({
+				success: false,
+				error: `Active wallet not found on chain ${chainId}`,
+			} as ApiResponse);
+		}
+
+		console.info("Executing transaction via agent", {
+			userId,
+			chainId,
+			transactions,
+		});
+
+		// Get agent private key for transaction creation
+		const agentPrivateKey = await privyService.getWalletPrivateKey(
+			wallet.agentWalletId
+		);
+
+		// Create Safe transaction
+		const safeTransaction = await safeService.createSafeTransaction(
+			chainId,
+			walletChain.smartAccount,
+			transactions,
+			agentPrivateKey
+		);
+
+		// Get transaction hash for signing
+		const txHash = await safeService.getTransactionHash(
+			chainId,
+			walletChain.smartAccount,
+			safeTransaction
+		);
+
+		// Construct Safe domain and types for EIP-712 signing
+		const safeDomain = {
+			verifyingContract: walletChain.smartAccount,
+			chainId: chainId,
+		};
+
+		const safeTypes = {
+			SafeTx: [
+				{ name: "to", type: "address" },
+				{ name: "value", type: "uint256" },
+				{ name: "data", type: "bytes" },
+				{ name: "operation", type: "uint8" },
+				{ name: "safeTxGas", type: "uint256" },
+				{ name: "baseGas", type: "uint256" },
+				{ name: "gasPrice", type: "uint256" },
+				{ name: "gasToken", type: "address" },
+				{ name: "refundReceiver", type: "address" },
+				{ name: "nonce", type: "uint256" },
+			],
+		};
+
+		// Sign with agent wallet
+		const signature = await privyService.signTypedData(
+			wallet.agentWalletId,
+			chainId,
+			safeDomain,
+			safeTypes,
+			safeTransaction.data
+		);
+
+		// Execute transaction
+		const executionHash = await safeService.executeTransaction(
+			chainId,
+			walletChain.smartAccount,
+			safeTransaction,
+			signature,
+			agentPrivateKey
+		);
+
+		console.info("Transaction executed successfully", {
+			userId,
+			executionHash,
+		});
+
+		return res.json({
+			success: true,
+			data: {
+				transactionHash: executionHash,
+			},
+		} as ApiResponse);
+	} catch (error) {
+		console.error("Execution failed:", error);
+		return res.status(500).json({
+			success: false,
+			error: "Transaction execution failed",
+			details: error instanceof Error ? error.message : "Unknown error",
+		} as ApiResponse);
+	}
+});
+
+/**
+ * Revoke agent access
+ */
+router.post("/revoke", walletOperationLimit, async (req, res) => {
+	try {
+		// Validate input
+		const { error, value } = revokeSchema.validate(req.body);
+		if (error) {
+			console.warn("Invalid revoke request", { error: error.details });
+			return res.status(400).json({
+				success: false,
+				error: "Invalid input data",
+				details: error.details[0]?.message || "Validation error",
+			} as ApiResponse);
+		}
+
+		const { userId } = value as { userId: string };
+
+		const wallet = await prisma.wallet.findUnique({
+			where: { userId },
+			include: { walletChains: true },
+		});
+
+		if (!wallet) {
+			console.warn("Wallet not found for revoke", { userId });
+			return res.status(404).json({
+				success: false,
+				error: "Wallet not found",
+			} as ApiResponse);
+		}
+
+		console.info("Revoking agent access", { userId, walletId: wallet.id });
+
+		// Get the first active wallet chain for revocation
+		const walletChain = wallet.walletChains.find(
+			(wc) => wc.status === "ACTIVE"
+		);
+		if (!walletChain || !walletChain.smartAccount) {
+			return res.status(404).json({
+				success: false,
+				error: "Active wallet chain not found",
+			} as ApiResponse);
+		}
+
+		// Create remove owner transaction
+		const removeOwnerTx = await safeService.removeOwner(
+			walletChain.chainId,
+			walletChain.smartAccount,
+			wallet.agentAddress,
+			1
+		);
+
+		// Note: This transaction needs to be signed by the user, not the agent
+		// Return transaction data for user to sign on frontend
+
+		// Update status in DB
+		await prisma.wallet.update({
+			where: { userId },
+			data: { status: "REVOKED" },
+		});
+
+		console.info("Agent access revoked successfully", { userId });
+
+		return res.json({
+			success: true,
+			data: {
+				transactionData: removeOwnerTx,
+				message: "Agent access revoked",
+			},
+		} as ApiResponse);
+	} catch (error) {
+		console.error("Revoke failed:", error);
+		return res.status(500).json({
+			success: false,
+			error: "Revoke failed",
+			details: error instanceof Error ? error.message : "Unknown error",
+		} as ApiResponse);
+	}
+});
+
+/**
+ * Get wallet balance with detailed information
+ */
+router.get("/balance", walletOperationLimit, async (req, res) => {
+	try {
+		const { userId, chainId } = req.query;
+
+		if (!userId) {
+			return res.status(400).json({
+				success: false,
+				error: "userId required",
+			} as ApiResponse);
+		}
+
+		const { createTransactionExecutor } = await import(
+			"../services/transaction-executor"
+		);
+		const executor = createTransactionExecutor();
+
+		const balanceInfo = await executor.getSafeBalanceInfo(
+			userId as string,
+			chainId ? parseInt(chainId as string) : undefined
+		);
+
+		if (!balanceInfo.success) {
+			return res.status(404).json({
+				success: false,
+				error: balanceInfo.error || "Balance check failed",
+			} as ApiResponse);
+		}
+
+		return res.json({
+			success: true,
+			data: {
+				balance: balanceInfo.balance,
+				balanceRBTC: balanceInfo.balanceRBTC,
+				safeAddress: balanceInfo.safeAddress,
+				chainId: balanceInfo.chainId,
+				fundingInstructions:
+					balanceInfo.balanceRBTC === "0"
+						? {
+								message:
+									"Safe contract has no balance. Please fund it to enable transactions.",
+								safeAddress: balanceInfo.safeAddress,
+								chainId: balanceInfo.chainId,
+								recommendedAmount: "0.01", // 0.01 RBTC minimum
+						  }
+						: undefined,
+			},
+		} as ApiResponse);
+	} catch (error) {
+		console.error("Balance check failed:", error);
+		return res.status(500).json({
+			success: false,
+			error: "Balance check failed",
+			details: error instanceof Error ? error.message : "Unknown error",
+		} as ApiResponse);
+	}
+});
+
+/**
+ * Execute transaction from calendar event (for testing/manual execution)
+ */
+router.post("/execute-event", walletOperationLimit, async (req, res) => {
+	try {
+		const { eventId } = req.body;
+
+		if (!eventId) {
+			return res.status(400).json({
+				success: false,
+				error: "eventId required",
+			} as ApiResponse);
+		}
+
+		const { createTransactionExecutor } = await import(
+			"../services/transaction-executor"
+		);
+		const executor = createTransactionExecutor();
+
+		const result = await executor.executeTransactionFromEvent(eventId);
+
+		if (result.success) {
+			return res.json({
+				success: true,
+				data: {
+					transactionHash: result.transactionHash,
+					message: "Transaction executed successfully",
+				},
+			} as ApiResponse);
+		} else {
+			return res.status(400).json({
+				success: false,
+				error: result.error || "Transaction execution failed",
+			} as ApiResponse);
+		}
+	} catch (error) {
+		console.error("Event execution failed:", error);
+		return res.status(500).json({
+			success: false,
+			error: "Event execution failed",
+			details: error instanceof Error ? error.message : "Unknown error",
+		} as ApiResponse);
+	}
+});
+
+/**
+ * Process all scheduled transactions (for testing/manual trigger)
+ */
+router.post("/process-scheduled", walletOperationLimit, async (req, res) => {
+	try {
+		const { createTransactionExecutor } = await import(
+			"../services/transaction-executor"
+		);
+		const executor = createTransactionExecutor();
+
+		const result = await executor.processScheduledTransactions();
+
+		return res.json({
+			success: true,
+			data: {
+				processed: result.processed,
+				successful: result.successful,
+				failed: result.failed,
+				message: "Scheduled transactions processed",
+			},
+		} as ApiResponse);
+	} catch (error) {
+		console.error("Scheduled processing failed:", error);
+		return res.status(500).json({
+			success: false,
+			error: "Scheduled processing failed",
+			details: error instanceof Error ? error.message : "Unknown error",
+		} as ApiResponse);
+	}
+});
+
+/**
  * Redeploy Safe contract (for fixing wallet issues)
  */
 router.post("/redeploy-safe", walletOperationLimit, async (req, res) => {
@@ -456,7 +816,7 @@ router.post("/redeploy-safe", walletOperationLimit, async (req, res) => {
 			} as ApiResponse);
 		}
 
-		console.log("Redeploying Safe contract", {
+		console.info("Redeploying Safe contract", {
 			userId,
 			currentSafe: walletChain.smartAccount,
 			agentAddress: wallet.agentAddress,
@@ -483,7 +843,7 @@ router.post("/redeploy-safe", walletOperationLimit, async (req, res) => {
 			},
 		});
 
-		console.log("Safe contract redeployed successfully", {
+		console.info("Safe contract redeployed successfully", {
 			userId,
 			oldSafe: walletChain.smartAccount,
 			newSafe: newSafeAddress,

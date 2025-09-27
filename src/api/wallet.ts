@@ -50,7 +50,7 @@ const revokeSchema = Joi.object({
 
 // Rate limiting for wallet operations
 const walletCreationLimit = rateLimit({
-	windowMs: 15 * 60 * 1000, // 15 minutes
+	windowMs: 1 * 60 * 1000, // 15 minutes
 	max: 1, // 1 wallet creation per user per 15 minutes
 	keyGenerator: (req) => req.body["userId"],
 	message: {

@@ -1,288 +1,293 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
-
-export interface ParsedEventData {
-	title: string;
-	description?: string;
-	startTime: string; // ISO string
-	endTime: string; // ISO string
-	location?: string;
-	attendees?: string[];
-	confidence: number; // 0-1 scale
-	suggestions?: string[];
-}
+import { config } from "../config";
+import {
+	ParsedAiCommand,
+	GeminiApiResponse,
+	AiIntent,
+	AiAction,
+	AiParameters,
+} from "../types";
 
 export class GeminiService {
 	private genAI: GoogleGenerativeAI;
-	private model;
+	private model: any;
 
 	constructor() {
-		if (!process.env.GOOGLE_AI_API_KEY) {
-			throw new Error("GOOGLE_AI_API_KEY is required");
-		}
-
-		this.genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY);
-		this.model = this.genAI.getGenerativeModel({ model: "gemini-pro" });
+		this.genAI = new GoogleGenerativeAI(config.geminiApiKey);
+		this.model = this.genAI.getGenerativeModel({
+			model: "gemini-2.0-flash-exp",
+		});
 	}
 
 	/**
-	 * Parse natural language input into structured event data
+	 * Parse user text to extract intent, action, and parameters
 	 */
-	async parseEventFromText(input: string): Promise<ParsedEventData> {
+	async parseAiCommand(
+		userText: string,
+		userId: string,
+		eventId?: string,
+		scheduledTime?: Date
+	): Promise<GeminiApiResponse> {
 		try {
-			const prompt = `
-Parse the following natural language text into a structured calendar event. 
-Extract all relevant information and provide confidence scores.
+			const prompt = this.buildParsingPrompt(userText, scheduledTime);
 
-Input: "${input}"
+			const result = await this.model.generateContent(prompt);
+			const response = await result.response;
+			const text = response.text();
 
-Please respond with a JSON object in this exact format:
+			// Parse the JSON response from Gemini
+			const parsedCommand = this.parseGeminiResponse(
+				text,
+				userText,
+				userId,
+				eventId,
+				scheduledTime
+			);
+
+			console.info("Successfully parsed AI command", {
+				userId,
+				intent: parsedCommand.intent.type,
+				action: parsedCommand.action.type,
+				confidence: parsedCommand.confidence,
+				scheduledTime: parsedCommand.scheduledTime?.toISOString(),
+			});
+
+			return {
+				success: true,
+				parsedCommand,
+			};
+		} catch (error) {
+			console.error("Failed to parse AI command with Gemini", {
+				error,
+				userId,
+				userText: userText.substring(0, 100), // Log first 100 chars for debugging
+			});
+
+			return {
+				success: false,
+				error: error instanceof Error ? error.message : "Unknown error",
+			};
+		}
+	}
+
+	/**
+	 * Build the prompt for Gemini to parse AI commands
+	 */
+	private buildParsingPrompt(userText: string, scheduledTime?: Date): string {
+		const scheduledTimeInfo = scheduledTime
+			? `\nIMPORTANT: This command is scheduled to execute at: ${scheduledTime.toISOString()} (${scheduledTime.toLocaleString()})`
+			: "\nIMPORTANT: This command has no scheduled time - it should execute immediately.";
+
+		return `
+You are an AI assistant that specializes in parsing cryptocurrency and DeFi commands from user text. 
+Your task is to extract structured information from user commands that start with "@ai".${scheduledTimeInfo}
+
+Parse the following user text and return a JSON object with the following structure:
+
 {
-  "title": "Event title",
-  "description": "Event description (optional)",
-  "startTime": "ISO 8601 datetime string",
-  "endTime": "ISO 8601 datetime string", 
-  "location": "Location (if mentioned)",
-  "attendees": ["email@example.com"] (if mentioned),
-  "confidence": 0.95,
-  "suggestions": ["suggestion 1", "suggestion 2"]
+  "intent": {
+    "type": "payment" | "transfer" | "swap" | "defi" | "stake" | "deposit" | "split" | "unknown",
+    "description": "Brief description of what the user wants to do"
+  },
+  "action": {
+    "type": "send" | "pay" | "swap" | "stake" | "deposit" | "split" | "convert" | "unknown",
+    "description": "Specific action to be performed"
+  },
+  "parameters": {
+    "amount": {
+      "value": number,
+      "currency": "string (e.g., USDC, ETH, BTC)",
+      "unit": "string (optional)"
+    },
+    "recipient": {
+      "address": "string (wallet address)",
+      "ens": "string (ENS name like vitalik.eth)",
+      "username": "string (username like @alice)",
+      "chain": "string (blockchain network)"
+    },
+    "fromToken": "string (source token)",
+    "toToken": "string (destination token)",
+    "protocol": "string (protocol name like 1inch)",
+    "chain": "string (blockchain network)",
+    "participants": ["string array of usernames for splits"],
+    "splitAmount": number,
+    "pool": "string (staking pool name)",
+    "platform": "string (platform name)"
+  },
+  "confidence": number (0-1, how confident you are in the parsing),
+  "scheduledTime": "string (ISO 8601 format of when this transaction should execute)"
 }
 
-Rules:
-- Use current date/time as reference if not specified
-- Default duration is 1 hour if not specified
-- Confidence should be 0-1 based on how clear the input is
-- Include suggestions for clarification if needed
-- Always provide valid ISO 8601 datetime strings
-- If no time specified, suggest a reasonable default
+Examples of commands to parse:
 
-Current datetime for reference: ${new Date().toISOString()}
-`;
+1. "@ai send 1 USDC to vitalik.eth"
+   - Intent: transfer, Action: send
+   - Amount: 1 USDC, Recipient: vitalik.eth, Chain: Sepolia (default)
 
-			const result = await this.model.generateContent(prompt);
-			const response = await result.response;
-			const text = response.text();
+2. "@ai swap 50 USDC to ETH using 1inch"
+   - Intent: swap, Action: swap
+   - Amount: 50 USDC, FromToken: USDC, ToToken: ETH, Protocol: 1inch, Chain: Sepolia (default)
 
-			// Extract JSON from response
-			const jsonMatch = text.match(/\{[\s\S]*\}/);
-			if (!jsonMatch) {
-				throw new Error("Invalid response format from AI");
-			}
+3. "@ai split 200 USDC between @alice and @bob"
+   - Intent: split, Action: split
+   - Amount: 200 USDC, Participants: ["@alice", "@bob"], Chain: Sepolia (default)
 
-			const parsed = JSON.parse(jsonMatch[0]);
+4. "@ai stake 100 USDC into Flow staking pool"
+   - Intent: defi, Action: stake
+   - Amount: 100 USDC, Pool: Flow staking pool, Chain: Sepolia (default)
 
-			// Validate required fields
-			if (!parsed.title || !parsed.startTime || !parsed.endTime) {
-				throw new Error("Missing required event fields");
-			}
+5. "@ai pay 0.01 RBTC on Rootstock to satoshi.rsk"
+   - Intent: payment, Action: pay
+   - Amount: 0.01 RBTC, Chain: Rootstock, Recipient: satoshi.rsk
 
-			// Ensure valid date strings
-			new Date(parsed.startTime);
-			new Date(parsed.endTime);
+5b. "@ai send 0.000001 RBTC to alice.rsk on Rootstock"
+   - Intent: transfer, Action: send
+   - Amount: 0.000001 RBTC, Chain: Rootstock, Recipient: alice.rsk
+   - recipient: { ens: "alice.rsk", address: null, username: null, chain: "Rootstock" }
+
+6. "@ai send 100 RIF to alice.rsk on Rootstock"
+   - Intent: transfer, Action: send
+   - Amount: 100 RIF, Chain: Rootstock, Recipient: alice.rsk
+
+7. "@ai swap 100 USDC to RBTC on Rootstock"
+   - Intent: swap, Action: swap
+   - Amount: 100 USDC, FromToken: USDC, ToToken: RBTC, Chain: Rootstock
+
+8. "@ai send 0.001 FLOW to bob.eth on Flow"
+   - Intent: transfer, Action: send
+   - Amount: 0.001 FLOW, Chain: Flow, Recipient: bob.eth
+
+SUPPORTED TOKENS:
+- Sepolia: ETH (native), USDC, USDT, DAI
+- Rootstock: RBTC (native), RIF
+- Flow EVM: FLOW (native)
+
+IMPORTANT: Always use the exact token symbols listed above. For Rootstock Bitcoin, use "RBTC" (not "TRBTC" or "TestRBTC").
+
+SUPPORTED NAME SERVICES:
+- ENS: *.eth (Ethereum/Sepolia) - e.g., vitalik.eth, alice.eth
+- RNS: *.rsk (Rootstock) - e.g., alice.rsk, bob.rsk
+
+IMPORTANT: There is NO RIF name service. Use .rsk domains for Rootstock, not .rif domains.
+
+IMPORTANT: For recipient parsing:
+- If recipient is an ENS name (*.eth), put it in recipient.ens field
+- If recipient is an RNS name (*.rsk), put it in recipient.ens field  
+- If recipient is a wallet address (0x...), put it in recipient.address field
+- If recipient is a username (@alice), put it in recipient.username field
+- Always set recipient.chain to match the blockchain network
+
+IMPORTANT: For swap commands, always extract the fromToken from the amount currency. 
+If the command says "swap 100 USDC to ETH", then fromToken should be "USDC".
+
+IMPORTANT: Always include the scheduledTime field in your response. If a scheduled time is provided above, use that exact time. If no scheduled time is provided, set it to null.
+
+IMPORTANT: Always use testnet chains for development. If no blockchain chain is mentioned in the command, default to "Sepolia" for the chain field. For Rootstock, always use "Rootstock" (which maps to testnet).
+
+User text to parse: "${userText}"
+
+Return ONLY the JSON object, no additional text or explanations.`;
+	}
+
+	/**
+	 * Parse Gemini's response and create structured command object
+	 */
+	private parseGeminiResponse(
+		geminiText: string,
+		originalText: string,
+		userId: string,
+		eventId?: string,
+		scheduledTime?: Date
+	): ParsedAiCommand {
+		try {
+			// Clean the response text (remove markdown formatting if present)
+			const cleanText = geminiText
+				.replace(/```json\n?/g, "")
+				.replace(/```\n?/g, "")
+				.trim();
+
+			const parsed = JSON.parse(cleanText);
+
+			// Validate and structure the response
+			const intent: AiIntent = {
+				type: parsed.intent?.type || "unknown",
+				description: parsed.intent?.description || "Unknown intent",
+			};
+
+			const action: AiAction = {
+				type: parsed.action?.type || "unknown",
+				description: parsed.action?.description || "Unknown action",
+			};
+
+			const parameters: AiParameters = {
+				amount: parsed.parameters?.amount
+					? {
+							value: parsed.parameters.amount.value || 0,
+							currency: parsed.parameters.amount.currency || "",
+							unit: parsed.parameters.amount.unit,
+					  }
+					: undefined,
+				recipient: parsed.parameters?.recipient
+					? {
+							address: parsed.parameters.recipient.address,
+							ens: parsed.parameters.recipient.ens,
+							username: parsed.parameters.recipient.username,
+							chain:
+								parsed.parameters.recipient.chain || "Sepolia",
+					  }
+					: undefined,
+				fromToken: parsed.parameters?.fromToken,
+				toToken: parsed.parameters?.toToken,
+				protocol: parsed.parameters?.protocol,
+				chain: parsed.parameters?.chain || "Sepolia",
+				participants: parsed.parameters?.participants,
+				splitAmount: parsed.parameters?.splitAmount,
+				pool: parsed.parameters?.pool,
+				platform: parsed.parameters?.platform,
+			};
 
 			return {
-				title: parsed.title,
-				description: parsed.description,
-				startTime: parsed.startTime,
-				endTime: parsed.endTime,
-				location: parsed.location,
-				attendees: parsed.attendees || [],
-				confidence: Math.max(0, Math.min(1, parsed.confidence || 0.5)),
-				suggestions: parsed.suggestions || [],
+				intent,
+				action,
+				parameters,
+				confidence: parsed.confidence || 0.5,
+				rawText: originalText,
+				userId,
+				eventId,
+				scheduledTime:
+					scheduledTime ||
+					(parsed.scheduledTime
+						? new Date(parsed.scheduledTime)
+						: undefined),
 			};
 		} catch (error) {
-			console.error("Failed to parse event:", error);
-			throw new Error("Failed to parse event from natural language");
+			console.error("Failed to parse Gemini response", {
+				error,
+				geminiText: geminiText.substring(0, 200),
+				userId,
+			});
+
+			// Return a fallback parsed command
+			return {
+				intent: {
+					type: "unknown",
+					description: "Failed to parse intent",
+				},
+				action: {
+					type: "unknown",
+					description: "Failed to parse action",
+				},
+				parameters: {},
+				confidence: 0,
+				rawText: originalText,
+				userId,
+				eventId,
+				scheduledTime,
+			};
 		}
 	}
-
-	/**
-	 * Generate smart event suggestions based on user patterns
-	 */
-	async generateEventSuggestions(
-		userHistory: Array<{ title: string; startTime: Date; endTime: Date }>,
-		context?: string
-	): Promise<string[]> {
-		try {
-			const historyText = userHistory
-				.slice(-10) // Last 10 events
-				.map(
-					(event) =>
-						`${event.title} (${event.startTime.toDateString()})`
-				)
-				.join("\n");
-
-			const prompt = `
-Based on the user's recent calendar events, suggest 3-5 relevant upcoming events they might want to schedule.
-
-Recent events:
-${historyText}
-
-Additional context: ${context || "None"}
-
-Provide suggestions as a JSON array of strings, each being a natural language event description.
-Example: ["Team standup meeting tomorrow at 9 AM", "Follow-up call with client next week"]
-
-Focus on:
-- Work meetings and follow-ups
-- Regular recurring events
-- Project deadlines
-- Social activities
-
-Respond with only the JSON array.
-`;
-
-			const result = await this.model.generateContent(prompt);
-			const response = await result.response;
-			const text = response.text();
-
-			// Extract JSON array from response
-			const jsonMatch = text.match(/\[[\s\S]*\]/);
-			if (!jsonMatch) {
-				return [];
-			}
-
-			const suggestions = JSON.parse(jsonMatch[0]);
-			return Array.isArray(suggestions) ? suggestions : [];
-		} catch (error) {
-			console.error("Failed to generate suggestions:", error);
-			return [];
-		}
-	}
-
-	/**
-	 * Analyze event conflicts and provide resolution suggestions
-	 */
-	async analyzeConflicts(
-		newEvent: { title: string; startTime: Date; endTime: Date },
-		conflicts: Array<{ title: string; startTime: Date; endTime: Date }>
-	): Promise<{
-		severity: "low" | "medium" | "high";
-		suggestions: string[];
-	}> {
-		try {
-			const conflictText = conflicts
-				.map(
-					(c) =>
-						`${
-							c.title
-						} (${c.startTime.toLocaleString()} - ${c.endTime.toLocaleString()})`
-				)
-				.join("\n");
-
-			const prompt = `
-Analyze this scheduling conflict and provide resolution suggestions.
-
-New Event: ${
-				newEvent.title
-			} (${newEvent.startTime.toLocaleString()} - ${newEvent.endTime.toLocaleString()})
-
-Conflicting Events:
-${conflictText}
-
-Respond with JSON in this format:
-{
-  "severity": "low|medium|high",
-  "suggestions": ["suggestion 1", "suggestion 2", "suggestion 3"]
 }
 
-Severity guidelines:
-- low: Minor overlap or buffer time conflict
-- medium: Significant overlap but potentially manageable
-- high: Complete overlap or critical conflict
-
-Suggestions should be practical and specific.
-`;
-
-			const result = await this.model.generateContent(prompt);
-			const response = await result.response;
-			const text = response.text();
-
-			const jsonMatch = text.match(/\{[\s\S]*\}/);
-			if (!jsonMatch) {
-				return {
-					severity: "medium",
-					suggestions: ["Please resolve manually"],
-				};
-			}
-
-			const analysis = JSON.parse(jsonMatch[0]);
-
-			return {
-				severity: analysis.severity || "medium",
-				suggestions: Array.isArray(analysis.suggestions)
-					? analysis.suggestions
-					: [],
-			};
-		} catch (error) {
-			console.error("Failed to analyze conflicts:", error);
-			return {
-				severity: "medium",
-				suggestions: ["Unable to analyze conflict automatically"],
-			};
-		}
-	}
-
-	/**
-	 * Optimize event timing based on preferences and patterns
-	 */
-	async optimizeEventTiming(
-		eventText: string,
-		userPreferences: {
-			workingHours?: { start: string; end: string };
-			timeZone?: string;
-			preferredMeetingDuration?: number;
-		}
-	): Promise<{
-		originalParsing: ParsedEventData;
-		optimizedSuggestions: Array<{
-			startTime: string;
-			endTime: string;
-			reason: string;
-		}>;
-	}> {
-		try {
-			// First parse the original event
-			const originalParsing = await this.parseEventFromText(eventText);
-
-			const prompt = `
-Given this event and user preferences, suggest optimized timing options.
-
-Event: ${JSON.stringify(originalParsing)}
-User Preferences: ${JSON.stringify(userPreferences)}
-
-Provide 2-3 alternative timing suggestions that respect user preferences.
-
-Respond with JSON:
-{
-  "optimizedSuggestions": [
-    {
-      "startTime": "ISO datetime",
-      "endTime": "ISO datetime", 
-      "reason": "Why this timing is better"
-    }
-  ]
-}
-`;
-
-			const result = await this.model.generateContent(prompt);
-			const response = await result.response;
-			const text = response.text();
-
-			const jsonMatch = text.match(/\{[\s\S]*\}/);
-			if (!jsonMatch) {
-				return { originalParsing, optimizedSuggestions: [] };
-			}
-
-			const optimization = JSON.parse(jsonMatch[0]);
-
-			return {
-				originalParsing,
-				optimizedSuggestions: optimization.optimizedSuggestions || [],
-			};
-		} catch (error) {
-			console.error("Failed to optimize timing:", error);
-			const originalParsing = await this.parseEventFromText(eventText);
-			return { originalParsing, optimizedSuggestions: [] };
-		}
-	}
+export function createGeminiService(): GeminiService {
+	return new GeminiService();
 }

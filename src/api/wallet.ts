@@ -869,4 +869,138 @@ router.post("/redeploy-safe", walletOperationLimit, async (req, res) => {
 	}
 });
 
+/**
+ * Manually fund a smart account with deployer funds (for testing/emergency)
+ */
+router.post("/fund-smart-account", walletOperationLimit, async (req, res) => {
+	try {
+		const { userId, chainId, amount } = req.body;
+
+		if (!userId) {
+			return res.status(400).json({
+				success: false,
+				error: "userId required",
+			} as ApiResponse);
+		}
+
+		if (!chainId) {
+			return res.status(400).json({
+				success: false,
+				error: "chainId required",
+			} as ApiResponse);
+		}
+
+		const wallet = await prisma.wallet.findUnique({
+			where: { userId },
+			include: {
+				walletChains: {
+					where: { chainId: parseInt(chainId), status: "ACTIVE" },
+				},
+			},
+		});
+
+		if (!wallet || wallet.status !== "ACTIVE") {
+			return res.status(404).json({
+				success: false,
+				error: "Active wallet not found",
+			} as ApiResponse);
+		}
+
+		const walletChain = wallet.walletChains[0];
+		if (!walletChain || !walletChain.smartAccount) {
+			return res.status(404).json({
+				success: false,
+				error: `Active wallet chain not found for chain ${chainId}`,
+			} as ApiResponse);
+		}
+
+		console.info("Manual funding request", {
+			userId,
+			chainId,
+			smartAccount: walletChain.smartAccount,
+			requestedAmount: amount,
+		});
+
+		// Use the appropriate service based on chain support
+		let fundingResult;
+		if (safeService.isSafeCompatible(parseInt(chainId))) {
+			// For Safe-compatible chains, use direct funding approach
+			const chainConfig = safeService.getChainConfiguration(
+				parseInt(chainId)
+			);
+			const { ethers } = await import("ethers");
+
+			const provider = new ethers.JsonRpcProvider(chainConfig.rpcUrl);
+			const deployerSigner = new ethers.Wallet(
+				chainConfig.deployerPrivateKey,
+				provider
+			);
+
+			const fundingAmount = amount || "100000000000000000"; // 0.1 ETH equivalent
+
+			const fundingTx = await deployerSigner.sendTransaction({
+				to: walletChain.smartAccount,
+				value: BigInt(fundingAmount),
+			});
+
+			await fundingTx.wait();
+
+			fundingResult = {
+				success: true,
+				transactionHash: fundingTx.hash,
+			};
+		} else {
+			// For custom smart accounts, use the direct funding approach
+			const chainConfig = customSmartAccountService.getChainConfiguration(
+				parseInt(chainId)
+			);
+			const { ethers } = await import("ethers");
+
+			const provider = new ethers.JsonRpcProvider(chainConfig.rpcUrl);
+			const deployerSigner = new ethers.Wallet(
+				chainConfig.deployerPrivateKey,
+				provider
+			);
+
+			const fundingAmount = amount || "100000000000000000"; // 0.1 ETH equivalent
+
+			const fundingTx = await deployerSigner.sendTransaction({
+				to: walletChain.smartAccount,
+				value: BigInt(fundingAmount),
+			});
+
+			await fundingTx.wait();
+
+			fundingResult = {
+				success: true,
+				transactionHash: fundingTx.hash,
+			};
+		}
+
+		if (fundingResult.success) {
+			return res.json({
+				success: true,
+				data: {
+					smartAccount: walletChain.smartAccount,
+					chainId: parseInt(chainId),
+					transactionHash: fundingResult.transactionHash,
+					message: "Smart account funded successfully",
+				},
+			} as ApiResponse);
+		} else {
+			return res.status(500).json({
+				success: false,
+				error: "Funding failed",
+			} as ApiResponse);
+		}
+	} catch (error) {
+		console.error("Manual funding failed:", error);
+		return res.status(500).json({
+			success: false,
+			error: "Manual funding failed",
+			details: error instanceof Error ? error.message : "Unknown error",
+		} as ApiResponse);
+	}
+});
+
 export default router;

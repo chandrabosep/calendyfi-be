@@ -1,244 +1,266 @@
 import { google } from "googleapis";
-import { GoogleOAuthService } from "./google-oauth";
-
-export interface CalendarEvent {
-	id?: string;
-	title: string;
-	description?: string;
-	startTime: Date;
-	endTime: Date;
-	location?: string;
-	attendees?: string[];
-}
+import { GoogleCalendarEvent, CalendarEventData } from "../types";
+import { createAiEventProcessor } from "./ai-event-processor";
+import { isAiEvent } from "../utils/logger";
 
 export class CalendarApiService {
-	private googleOAuth: GoogleOAuthService;
+	public calendar: any;
+	private aiEventProcessor: any;
 
-	constructor() {
-		this.googleOAuth = new GoogleOAuthService();
+	constructor(accessToken: string) {
+		const auth = new google.auth.OAuth2();
+		auth.setCredentials({ access_token: accessToken });
+		this.calendar = google.calendar({ version: "v3", auth });
+		this.aiEventProcessor = createAiEventProcessor();
 	}
 
-	/**
-	 * Create authenticated calendar client
-	 */
-	private async getCalendarClient(
-		accessToken: string,
-		refreshToken?: string
-	) {
-		const oauth2Client = new google.auth.OAuth2(
-			process.env.GOOGLE_CLIENT_ID,
-			process.env.GOOGLE_CLIENT_SECRET,
-			process.env.GOOGLE_REDIRECT_URI
-		);
-
-		oauth2Client.setCredentials({
-			access_token: accessToken,
-			refresh_token: refreshToken,
-		});
-
-		return google.calendar({ version: "v3", auth: oauth2Client });
-	}
-
-	/**
-	 * List upcoming events
-	 */
-	async listEvents(
-		accessToken: string,
-		refreshToken?: string,
-		maxResults: number = 10
-	): Promise<CalendarEvent[]> {
+	async getRecentEvents(
+		calendarId: string = "primary",
+		hoursBack: number = 24
+	): Promise<GoogleCalendarEvent[]> {
 		try {
-			const calendar = await this.getCalendarClient(
-				accessToken,
-				refreshToken
-			);
+			const timeMin = new Date();
+			timeMin.setHours(timeMin.getHours() - hoursBack);
 
-			const response = await calendar.events.list({
-				calendarId: "primary",
-				timeMin: new Date().toISOString(),
-				maxResults,
+			const response = await this.calendar.events.list({
+				calendarId,
+				timeMin: timeMin.toISOString(),
+				maxResults: 100,
 				singleEvents: true,
 				orderBy: "startTime",
 			});
 
 			const events = response.data.items || [];
 
-			return events.map((event) => ({
-				id: event.id,
-				title: event.summary || "No Title",
-				description: event.description,
-				startTime: new Date(
-					event.start?.dateTime || event.start?.date || ""
-				),
-				endTime: new Date(event.end?.dateTime || event.end?.date || ""),
-				location: event.location,
-				attendees: event.attendees?.map((a) => a.email || "") || [],
-			}));
-		} catch (error) {
-			console.error("Failed to list events:", error);
-			throw new Error("Failed to retrieve calendar events");
-		}
-	}
-
-	/**
-	 * Create a new event
-	 */
-	async createEvent(
-		accessToken: string,
-		event: CalendarEvent,
-		refreshToken?: string
-	): Promise<string> {
-		try {
-			const calendar = await this.getCalendarClient(
-				accessToken,
-				refreshToken
-			);
-
-			const googleEvent = {
-				summary: event.title,
-				description: event.description,
-				location: event.location,
-				start: {
-					dateTime: event.startTime.toISOString(),
-					timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-				},
-				end: {
-					dateTime: event.endTime.toISOString(),
-					timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-				},
-				attendees: event.attendees?.map((email) => ({ email })),
-			};
-
-			const response = await calendar.events.insert({
-				calendarId: "primary",
-				requestBody: googleEvent,
+			console.info("Fetched recent events", {
+				calendarId,
+				hoursBack,
+				eventCount: events.length,
 			});
 
-			if (!response.data.id) {
-				throw new Error("No event ID returned");
-			}
-
-			return response.data.id;
+			return events;
 		} catch (error) {
-			console.error("Failed to create event:", error);
-			throw new Error("Failed to create calendar event");
-		}
-	}
-
-	/**
-	 * Update an existing event
-	 */
-	async updateEvent(
-		accessToken: string,
-		eventId: string,
-		event: Partial<CalendarEvent>,
-		refreshToken?: string
-	): Promise<void> {
-		try {
-			const calendar = await this.getCalendarClient(
-				accessToken,
-				refreshToken
-			);
-
-			const updateData: any = {};
-
-			if (event.title) updateData.summary = event.title;
-			if (event.description) updateData.description = event.description;
-			if (event.location) updateData.location = event.location;
-
-			if (event.startTime) {
-				updateData.start = {
-					dateTime: event.startTime.toISOString(),
-					timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-				};
-			}
-
-			if (event.endTime) {
-				updateData.end = {
-					dateTime: event.endTime.toISOString(),
-					timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-				};
-			}
-
-			if (event.attendees) {
-				updateData.attendees = event.attendees.map((email) => ({
-					email,
-				}));
-			}
-
-			await calendar.events.update({
-				calendarId: "primary",
-				eventId,
-				requestBody: updateData,
+			console.error("Failed to fetch recent events", {
+				error,
+				calendarId,
 			});
-		} catch (error) {
-			console.error("Failed to update event:", error);
-			throw new Error("Failed to update calendar event");
+			throw new Error("Failed to fetch calendar events");
 		}
 	}
 
-	/**
-	 * Delete an event
-	 */
-	async deleteEvent(
-		accessToken: string,
-		eventId: string,
-		refreshToken?: string
-	): Promise<void> {
+	async getAllEvents(
+		calendarId: string = "primary",
+		daysBack: number = 7,
+		daysForward: number = 7
+	): Promise<GoogleCalendarEvent[]> {
 		try {
-			const calendar = await this.getCalendarClient(
-				accessToken,
-				refreshToken
-			);
+			const timeMin = new Date();
+			timeMin.setDate(timeMin.getDate() - daysBack);
 
-			await calendar.events.delete({
-				calendarId: "primary",
-				eventId,
-			});
-		} catch (error) {
-			console.error("Failed to delete event:", error);
-			throw new Error("Failed to delete calendar event");
-		}
-	}
+			const timeMax = new Date();
+			timeMax.setDate(timeMax.getDate() + daysForward);
 
-	/**
-	 * Check for conflicting events
-	 */
-	async checkConflicts(
-		accessToken: string,
-		startTime: Date,
-		endTime: Date,
-		refreshToken?: string
-	): Promise<CalendarEvent[]> {
-		try {
-			const calendar = await this.getCalendarClient(
-				accessToken,
-				refreshToken
-			);
-
-			const response = await calendar.events.list({
-				calendarId: "primary",
-				timeMin: startTime.toISOString(),
-				timeMax: endTime.toISOString(),
+			const response = await this.calendar.events.list({
+				calendarId,
+				timeMin: timeMin.toISOString(),
+				timeMax: timeMax.toISOString(),
+				maxResults: 100,
 				singleEvents: true,
 				orderBy: "startTime",
 			});
 
-			const conflicts = response.data.items || [];
+			const events = response.data.items || [];
 
-			return conflicts.map((event) => ({
-				id: event.id,
-				title: event.summary || "No Title",
-				description: event.description,
-				startTime: new Date(
-					event.start?.dateTime || event.start?.date || ""
-				),
-				endTime: new Date(event.end?.dateTime || event.end?.date || ""),
-				location: event.location,
-			}));
+			// Silent fetch - no logging unless error
+
+			return events;
 		} catch (error) {
-			console.error("Failed to check conflicts:", error);
-			throw new Error("Failed to check for conflicting events");
+			console.error("Failed to fetch all events", {
+				error,
+				calendarId,
+			});
+			throw new Error("Failed to fetch calendar events");
 		}
 	}
+
+	async subscribeToCalendarChanges(
+		calendarId: string,
+		webhookUrl: string,
+		expirationTime: number
+	): Promise<{ channelId: string; resourceId: string }> {
+		try {
+			const response = await this.calendar.events.watch({
+				calendarId,
+				requestBody: {
+					id: `calendarhook-${Date.now()}`,
+					type: "web_hook",
+					address: webhookUrl,
+					expiration: expirationTime,
+				},
+			});
+
+			console.info("Subscribed to calendar changes", {
+				calendarId,
+				channelId: response.data.id,
+				resourceId: response.data.resourceId,
+				expiration: response.data.expiration,
+			});
+
+			return {
+				channelId: response.data.id!,
+				resourceId: response.data.resourceId!,
+			};
+		} catch (error) {
+			console.error("Failed to subscribe to calendar changes", {
+				error,
+				calendarId,
+			});
+			throw new Error("Failed to subscribe to calendar notifications");
+		}
+	}
+
+	async stopCalendarSubscription(
+		channelId: string,
+		resourceId: string
+	): Promise<void> {
+		try {
+			await this.calendar.channels.stop({
+				requestBody: {
+					id: channelId,
+					resourceId: resourceId,
+				},
+			});
+
+			console.info("Stopped calendar subscription", {
+				channelId,
+				resourceId,
+			});
+		} catch (error) {
+			console.error("Failed to stop calendar subscription", {
+				error,
+				channelId,
+				resourceId,
+			});
+			throw new Error("Failed to stop calendar subscription");
+		}
+	}
+
+	transformGoogleEventToCalendarEventData(
+		googleEvent: GoogleCalendarEvent,
+		userId: string,
+		calendarId: string
+	): CalendarEventData {
+		// Handle start time - prioritize dateTime over date, handle undefined cases
+		let startTime: Date;
+		if (googleEvent.start.dateTime) {
+			startTime = new Date(googleEvent.start.dateTime);
+		} else if (googleEvent.start.date) {
+			startTime = new Date(googleEvent.start.date);
+		} else {
+			// If no start time is provided, use current time as fallback
+			startTime = new Date();
+			console.warn(
+				"No start time found in Google Calendar event, using current time",
+				{
+					eventId: googleEvent.id,
+					title: googleEvent.summary,
+				}
+			);
+		}
+
+		// Handle end time - prioritize dateTime over date, handle undefined cases
+		let endTime: Date;
+		if (googleEvent.end.dateTime) {
+			endTime = new Date(googleEvent.end.dateTime);
+		} else if (googleEvent.end.date) {
+			endTime = new Date(googleEvent.end.date);
+		} else {
+			// If no end time is provided, use start time + 1 hour as fallback
+			endTime = new Date(startTime.getTime() + 60 * 60 * 1000);
+			console.warn(
+				"No end time found in Google Calendar event, using start time + 1 hour",
+				{
+					eventId: googleEvent.id,
+					title: googleEvent.summary,
+				}
+			);
+		}
+
+		return {
+			googleEventId: googleEvent.id,
+			calendarId,
+			title: googleEvent.summary || "Untitled Event",
+			description: googleEvent.description,
+			startTime,
+			endTime,
+			location: googleEvent.location,
+			attendees: googleEvent.attendees,
+			isAiEvent: isAiEvent(googleEvent.description, googleEvent.summary),
+		};
+	}
+
+	/**
+	 * Process AI events by parsing commands and determining actions
+	 */
+	async processAiEvent(
+		eventText: string,
+		userId: string,
+		eventId?: string,
+		scheduledTime?: Date
+	): Promise<{
+		success: boolean;
+		parsedCommand?: any;
+		nextSteps?: string[];
+		error?: string;
+	}> {
+		try {
+			console.info("Processing AI event in CalendarApiService", {
+				userId,
+				eventId,
+				eventText: eventText.substring(0, 100),
+				scheduledTime: scheduledTime?.toISOString(),
+				scheduledTimeProvided: !!scheduledTime,
+			});
+
+			const result = await this.aiEventProcessor.processAiEvent(
+				eventText,
+				userId,
+				eventId,
+				scheduledTime
+			);
+
+			if (result.success && result.parsedCommand) {
+				// Log the parsed command details
+				console.info("AI command parsed successfully", {
+					userId,
+					eventId,
+					intent: result.parsedCommand.intent.type,
+					action: result.parsedCommand.action.type,
+					confidence: result.parsedCommand.confidence,
+					scheduledTime:
+						result.parsedCommand.scheduledTime?.toISOString(),
+					nextStepsCount: result.nextSteps?.length || 0,
+				});
+			}
+
+			return result;
+		} catch (error) {
+			console.error("Failed to process AI event in CalendarApiService", {
+				error,
+				userId,
+				eventId,
+			});
+
+			return {
+				success: false,
+				error: error instanceof Error ? error.message : "Unknown error",
+			};
+		}
+	}
+}
+
+export function createCalendarApiService(
+	accessToken: string
+): CalendarApiService {
+	return new CalendarApiService(accessToken);
 }

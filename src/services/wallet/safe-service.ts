@@ -68,7 +68,7 @@ export class SafeService {
 		threshold: number = 1
 	): Promise<string> {
 		try {
-			console.log("Deploying Safe with owners", {
+			console.info("Deploying Safe with owners", {
 				chainId,
 				owners,
 				threshold,
@@ -100,7 +100,7 @@ export class SafeService {
 
 			// Get the predicted Safe address
 			const safeAddress = await safeSdk.getAddress();
-			console.log("Predicted Safe address", {
+			console.info("Predicted Safe address", {
 				chainId,
 				safeAddress,
 			});
@@ -112,7 +112,7 @@ export class SafeService {
 			const existingCode = await provider.getCode(safeAddress);
 
 			if (existingCode !== "0x") {
-				console.log("Safe already deployed at predicted address", {
+				console.info("Safe already deployed at predicted address", {
 					chainId,
 					safeAddress,
 					codeLength: existingCode.length,
@@ -144,13 +144,16 @@ export class SafeService {
 				);
 			}
 
-			console.log("Safe deployed successfully", {
+			console.info("Safe deployed successfully", {
 				chainId,
 				safeAddress,
 				txHash: txResponse.hash,
 				receipt: receipt?.hash,
 				contractCodeLength: code.length,
 			});
+
+			// Automatically fund the Safe with a small amount for initial operations
+			await this.autoFundSafe(chainId, safeAddress);
 
 			return safeAddress;
 		} catch (error) {
@@ -173,7 +176,7 @@ export class SafeService {
 		agentPrivateKey: string
 	): Promise<EthSafeTransaction> {
 		try {
-			console.log("Creating Safe transaction", {
+			console.info("Creating Safe transaction", {
 				chainId,
 				safeAddress,
 				transactions,
@@ -196,7 +199,7 @@ export class SafeService {
 				},
 			});
 
-			console.log("Safe transaction created successfully", {
+			console.info("Safe transaction created successfully", {
 				chainId,
 				safeAddress,
 				transactions: transactions,
@@ -230,7 +233,7 @@ export class SafeService {
 		agentPrivateKey: string
 	): Promise<string> {
 		try {
-			console.log("Executing Safe transaction", {
+			console.info("Executing Safe transaction", {
 				chainId,
 				safeAddress,
 			});
@@ -240,7 +243,7 @@ export class SafeService {
 			// Create agent signer from the provided private key
 			const agentSigner = new ethers.Wallet(agentPrivateKey, provider);
 
-			console.log("Safe.init parameters", {
+			console.info("Safe.init parameters", {
 				chainId,
 				signerAddress: agentSigner.address,
 				signerPrivateKey: agentPrivateKey ? "***SET***" : "UNDEFINED",
@@ -254,7 +257,7 @@ export class SafeService {
 			});
 
 			// Add signature to transaction
-			console.log("Adding signature to Safe transaction", {
+			console.info("Adding signature to Safe transaction", {
 				chainId,
 				signature,
 				signatureLength: signature.length,
@@ -281,7 +284,7 @@ export class SafeService {
 				await (executeTxResponse.transactionResponse as any).wait();
 			}
 
-			console.log("Safe transaction executed successfully", {
+			console.info("Safe transaction executed successfully", {
 				chainId,
 				safeAddress,
 				txHash: executeTxResponse.hash,
@@ -306,7 +309,7 @@ export class SafeService {
 		newThreshold: number
 	): Promise<EthSafeTransaction> {
 		try {
-			console.log("Creating remove owner transaction", {
+			console.info("Creating remove owner transaction", {
 				chainId,
 				safeAddress,
 				ownerToRemove,
@@ -326,7 +329,7 @@ export class SafeService {
 				threshold: newThreshold,
 			});
 
-			console.log("Remove owner transaction created successfully", {
+			console.info("Remove owner transaction created successfully", {
 				chainId,
 				safeAddress,
 				ownerToRemove,
@@ -486,5 +489,113 @@ export class SafeService {
 	 */
 	getProviderPublic(chainId: number): ethers.Provider {
 		return this.getProvider(chainId);
+	}
+
+	/**
+	 * Automatically fund a newly deployed Safe with a small amount for initial operations
+	 */
+	private async autoFundSafe(
+		chainId: number,
+		safeAddress: string
+	): Promise<void> {
+		try {
+			console.info("Auto-funding Safe contract", {
+				chainId,
+				safeAddress,
+			});
+
+			const deployerSigner = this.getDeployerSigner(chainId);
+			const provider = this.getProvider(chainId);
+
+			// Check deployer balance first
+			const deployerBalance = await provider.getBalance(
+				deployerSigner.address
+			);
+
+			// Define funding amounts per chain (in wei)
+			const fundingAmounts: Record<number, bigint> = {
+				31: BigInt("10000000000000000"), // Rootstock Testnet: 0.01 RBTC
+				30: BigInt("10000000000000000"), // Rootstock Mainnet: 0.01 RBTC
+				11155111: BigInt("10000000000000000"), // Sepolia: 0.01 ETH
+				545: BigInt("100000000000000000"), // Flow EVM: 0.1 FLOW (more generous for testing)
+			};
+
+			const fundingAmount =
+				fundingAmounts[chainId] || BigInt("10000000000000000"); // Default 0.01 ETH
+
+			if (deployerBalance < fundingAmount) {
+				console.warn(
+					"Deployer has insufficient balance for auto-funding",
+					{
+						chainId,
+						deployerAddress: deployerSigner.address,
+						deployerBalance: deployerBalance.toString(),
+						requiredFunding: fundingAmount.toString(),
+					}
+				);
+				// Don't throw error, just log warning and continue
+				return;
+			}
+
+			// Check if Safe already has sufficient balance
+			const currentBalance = await provider.getBalance(safeAddress);
+			if (currentBalance >= fundingAmount / 2n) {
+				// If it has at least half the funding amount
+				console.info(
+					"Safe already has sufficient balance, skipping auto-funding",
+					{
+						chainId,
+						safeAddress,
+						currentBalance: currentBalance.toString(),
+					}
+				);
+				return;
+			}
+
+			// Send funding transaction
+			const fundingTx = await deployerSigner.sendTransaction({
+				to: safeAddress,
+				value: fundingAmount,
+				// Use higher gas limit for funding transaction
+				gasLimit: 21000,
+			});
+
+			console.info("Auto-funding transaction sent", {
+				chainId,
+				safeAddress,
+				fundingAmount: fundingAmount.toString(),
+				txHash: fundingTx.hash,
+				deployerAddress: deployerSigner.address,
+			});
+
+			// Wait for confirmation
+			const receipt = await fundingTx.wait();
+
+			if (receipt && receipt.status === 1) {
+				const newBalance = await provider.getBalance(safeAddress);
+				console.info("Safe auto-funding completed successfully", {
+					chainId,
+					safeAddress,
+					fundingAmount: fundingAmount.toString(),
+					newBalance: newBalance.toString(),
+					txHash: fundingTx.hash,
+					blockNumber: receipt.blockNumber,
+				});
+			} else {
+				console.warn("Auto-funding transaction failed", {
+					chainId,
+					safeAddress,
+					txHash: fundingTx.hash,
+					status: receipt?.status,
+				});
+			}
+		} catch (error) {
+			console.error("Auto-funding Safe failed (non-critical)", {
+				error: error instanceof Error ? error.message : error,
+				chainId,
+				safeAddress,
+			});
+			// Don't throw error - funding failure shouldn't break deployment
+		}
 	}
 }

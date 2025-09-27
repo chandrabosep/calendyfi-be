@@ -1,425 +1,480 @@
-import express from "express";
-import { CalendarApiService, CalendarEvent } from "../services/calendar-api";
-import { AIEventProcessor } from "../services/ai-event-processor";
-import { TokenService } from "../utils/token-service";
-import prisma from "../db/client";
+import { Router, Request, Response } from "express";
+import { CalendarApiService, createCalendarApiService } from "../services/calendar-api";
+import { prisma } from "../db/client";
+import { decrypt } from "../utils/encryption";
+import { ApiResponse } from "../types";
 
-const router = express.Router();
-const calendarService = new CalendarApiService();
-const aiProcessor = new AIEventProcessor();
+const router = Router();
 
-/**
- * Middleware to authenticate requests
- */
-async function authenticateUser(req: any, res: any, next: any) {
+// Webhook endpoint for Google Calendar push notifications
+router.post("/webhook", async (req: Request, res: Response) => {
 	try {
-		const authHeader = req.headers.authorization;
-		if (!authHeader?.startsWith("Bearer ")) {
-			return res.status(401).json({ error: "No token provided" });
+		const { headers, body } = req;
+
+		// Validate webhook authenticity (simplified - in production, verify X-Goog headers)
+		const resourceId = headers["x-goog-resource-id"] as string;
+		const resourceState = headers["x-goog-resource-state"] as string;
+
+		if (!resourceId || !resourceState) {
+			console.warn("Invalid webhook headers", { headers });
+			return res.status(400).json({
+				success: false,
+				error: "Invalid webhook headers",
+			} as ApiResponse);
 		}
 
-		const token = authHeader.substring(7);
-		const payload = TokenService.verifyToken(token);
+		console.info("Received calendar webhook", {
+			resourceId,
+			resourceState,
+			headers: Object.keys(headers),
+		});
 
-		const user = await prisma.user.findUnique({
-			where: { id: payload.userId },
+		// Handle different resource states
+		if (resourceState === "sync") {
+			// Initial sync - fetch all events
+			await handleCalendarSync(resourceId);
+		} else if (resourceState === "update") {
+			// Calendar updated - fetch recent events
+			await handleCalendarUpdate(resourceId);
+		}
+
+		return res.status(200).json({
+			success: true,
+			message: "Webhook processed successfully",
+		} as ApiResponse);
+	} catch (error) {
+		console.error("Webhook processing failed", { error });
+		return res.status(500).json({
+			success: false,
+			error: "Webhook processing failed",
+		} as ApiResponse);
+	}
+});
+
+// Fetch AI events with parsed command data for a user
+router.get("/events/ai", async (req: Request, res: Response) => {
+	try {
+		const userId = req.query.userId as string;
+
+		if (!userId) {
+			return res.status(400).json({
+				success: false,
+				error: "User ID is required",
+			} as ApiResponse);
+		}
+
+		const aiEvents = await prisma.calendarEvent.findMany({
+			where: {
+				userId,
+				isAiEvent: true,
+			},
 			select: {
 				id: true,
-				email: true,
-				accessToken: true,
-				refreshToken: true,
-				accessTokenExpiry: true,
+				googleEventId: true,
+				title: true,
+				description: true,
+				startTime: true,
+				endTime: true,
+				parsedIntent: true,
+				parsedAction: true,
+				parsedAmount: true,
+				parsedRecipient: true,
+				parsedFromToken: true,
+				parsedToToken: true,
+				parsedProtocol: true,
+				parsedChain: true,
+				parsedParticipants: true,
+				parsedPool: true,
+				parsedPlatform: true,
+				parsedConfidence: true,
+				parsedScheduledTime: true,
+				parsedCommandRaw: true,
+				createdAt: true,
+				updatedAt: true,
+			},
+			orderBy: {
+				startTime: "desc",
 			},
 		});
 
-		if (!user || !user.accessToken) {
-			return res
-				.status(401)
-				.json({ error: "Invalid user or missing calendar access" });
+		console.info("Fetched AI events with parsed data", {
+			userId,
+			eventCount: aiEvents.length,
+		});
+
+		return res.json({
+			success: true,
+			data: {
+				events: aiEvents,
+				totalCount: aiEvents.length,
+			},
+		} as ApiResponse);
+	} catch (error) {
+		console.error("Failed to fetch AI events", { error });
+		return res.status(500).json({
+			success: false,
+			error: "Failed to fetch AI events",
+		} as ApiResponse);
+	}
+});
+
+// Fetch recent events for a user
+router.get("/events/recent", async (req: Request, res: Response) => {
+	try {
+		const userId = req.query.userId as string;
+		const hoursBack = parseInt(req.query.hoursBack as string) || 24;
+
+		if (!userId) {
+			return res.status(400).json({
+				success: false,
+				error: "User ID is required",
+			} as ApiResponse);
 		}
 
-		req.user = user;
-		next();
+		const user = await prisma.user.findUnique({
+			where: { id: userId },
+		});
+
+		if (!user) {
+			return res.status(404).json({
+				success: false,
+				error: "User not found",
+			} as ApiResponse);
+		}
+
+		// Decrypt and use refresh token to get fresh access token
+		const refreshToken = decrypt(user.refreshToken);
+		const calendarService = createCalendarApiService(
+			user.accessToken || ""
+		);
+
+		const events = await calendarService.getRecentEvents(
+			"primary",
+			hoursBack
+		);
+
+		// Process and store events
+		const processedEvents = await processAndStoreEvents(
+			events,
+			userId,
+			"primary",
+			user.accessToken || ""
+		);
+
+		console.info("Fetched recent events", {
+			userId,
+			hoursBack,
+			eventCount: processedEvents.length,
+			aiEventCount: processedEvents.filter((e) => e.isAiEvent).length,
+		});
+
+		return res.json({
+			success: true,
+			data: {
+				events: processedEvents,
+				totalCount: processedEvents.length,
+				aiEventCount: processedEvents.filter((e) => e.isAiEvent).length,
+			},
+		} as ApiResponse);
 	} catch (error) {
-		res.status(401).json({ error: "Authentication failed" });
+		console.error("Failed to fetch recent events", { error });
+		return res.status(500).json({
+			success: false,
+			error: "Failed to fetch recent events",
+		} as ApiResponse);
 	}
+});
+
+// Subscribe to calendar changes
+router.post("/subscribe", async (req: Request, res: Response) => {
+	try {
+		const { userId, calendarId = "primary" } = req.body;
+
+		if (!userId) {
+			return res.status(400).json({
+				success: false,
+				error: "User ID is required",
+			} as ApiResponse);
+		}
+
+		const user = await prisma.user.findUnique({
+			where: { id: userId },
+		});
+
+		if (!user) {
+			return res.status(404).json({
+				success: false,
+				error: "User not found",
+			} as ApiResponse);
+		}
+
+		const calendarService = createCalendarApiService(
+			user.accessToken || ""
+		);
+
+		// Set expiration to 1 week from now
+		const expirationTime = Date.now() + 7 * 24 * 60 * 60 * 1000;
+		const webhookUrl = `${
+			process.env.WEBHOOK_BASE_URL || "http://localhost:3000"
+		}/api/calendar/webhook`;
+
+		const subscription = await calendarService.subscribeToCalendarChanges(
+			calendarId,
+			webhookUrl,
+			expirationTime
+		);
+
+		// Store webhook channel info
+		await prisma.webhookChannel.create({
+			data: {
+				userId: user.id,
+				channelId: subscription.channelId,
+				resourceId: subscription.resourceId,
+				expiration: new Date(expirationTime),
+			},
+		});
+
+		console.info("Subscribed to calendar changes", {
+			userId,
+			calendarId,
+			channelId: subscription.channelId,
+			expiration: new Date(expirationTime),
+		});
+
+		return res.json({
+			success: true,
+			data: {
+				channelId: subscription.channelId,
+				resourceId: subscription.resourceId,
+				expiration: new Date(expirationTime),
+			},
+		} as ApiResponse);
+	} catch (error) {
+		console.error("Failed to subscribe to calendar", { error });
+		return res.status(500).json({
+			success: false,
+			error: "Failed to subscribe to calendar changes",
+		} as ApiResponse);
+	}
+});
+
+// Helper function to process and store events
+async function processAndStoreEvents(
+	events: any[],
+	userId: string,
+	calendarId: string,
+	accessToken?: string
+): Promise<any[]> {
+	const calendarService = createCalendarApiService(accessToken || "");
+	const processedEvents = [];
+
+	for (const event of events) {
+		try {
+			const eventData =
+				calendarService.transformGoogleEventToCalendarEventData(
+					event,
+					userId,
+					calendarId
+				);
+
+			// Store event in database
+			const storedEvent = await prisma.calendarEvent.upsert({
+				where: { googleEventId: eventData.googleEventId },
+				update: {
+					title: eventData.title,
+					description: eventData.description,
+					startTime: eventData.startTime,
+					endTime: eventData.endTime,
+					location: eventData.location,
+					attendees: eventData.attendees,
+					isAiEvent: eventData.isAiEvent,
+				},
+				create: {
+					googleEventId: eventData.googleEventId,
+					userId: userId,
+					calendarId: eventData.calendarId,
+					title: eventData.title,
+					description: eventData.description,
+					startTime: eventData.startTime,
+					endTime: eventData.endTime,
+					location: eventData.location,
+					attendees: eventData.attendees,
+					isAiEvent: eventData.isAiEvent,
+				},
+			});
+
+			// Log AI events
+			if (eventData.isAiEvent) {
+				console.info("AI event detected", {
+					title: eventData.title,
+					description: eventData.description,
+					startTime: eventData.startTime,
+					endTime: eventData.endTime,
+					userId,
+				});
+
+				// Process AI event with Gemini
+				try {
+					const eventText = `${eventData.title} ${
+						eventData.description || ""
+					}`.trim();
+
+					console.info("Processing AI event", {
+						eventId: eventData.googleEventId,
+						userId,
+						eventText: eventText.substring(0, 100),
+					});
+
+					const aiResult = await calendarService.processAiEvent(
+						eventText,
+						userId,
+						eventData.googleEventId,
+						eventData.startTime
+					);
+
+					if (aiResult.success && aiResult.parsedCommand) {
+						const parsedCommand = aiResult.parsedCommand;
+
+						console.info("AI event processed successfully", {
+							eventId: eventData.googleEventId,
+							userId,
+							intent: parsedCommand.intent.type,
+							action: parsedCommand.action.type,
+							confidence: parsedCommand.confidence,
+							scheduledTime:
+								parsedCommand.scheduledTime?.toISOString(),
+						});
+
+						// Update the stored event with parsed command data
+						await prisma.calendarEvent.update({
+							where: { googleEventId: eventData.googleEventId },
+							data: {
+								parsedIntent: parsedCommand.intent.type,
+								parsedAction: parsedCommand.action.type,
+								parsedAmount:
+									parsedCommand.parameters.amount || null,
+								parsedRecipient:
+									parsedCommand.parameters.recipient || null,
+								parsedFromToken:
+									parsedCommand.parameters.fromToken || null,
+								parsedToToken:
+									parsedCommand.parameters.toToken || null,
+								parsedProtocol:
+									parsedCommand.parameters.protocol || null,
+								parsedChain:
+									parsedCommand.parameters.chain || null,
+								parsedParticipants:
+									parsedCommand.parameters.participants ||
+									null,
+								parsedPool:
+									parsedCommand.parameters.pool || null,
+								parsedPlatform:
+									parsedCommand.parameters.platform || null,
+								parsedConfidence: parsedCommand.confidence,
+								parsedScheduledTime:
+									parsedCommand.scheduledTime || null,
+								parsedCommandRaw: parsedCommand,
+							},
+						});
+
+						console.info("Parsed command data stored in database", {
+							eventId: eventData.googleEventId,
+							userId,
+							intent: parsedCommand.intent.type,
+							action: parsedCommand.action.type,
+						});
+					} else {
+						console.warn("AI event processing failed", {
+							eventId: eventData.googleEventId,
+							userId,
+							error: aiResult.error,
+						});
+					}
+				} catch (error) {
+					console.error("Failed to process AI event", {
+						error,
+						eventId: eventData.googleEventId,
+						userId,
+					});
+				}
+			}
+
+			processedEvents.push(storedEvent);
+		} catch (error) {
+			console.error("Failed to process event", {
+				error,
+				eventId: event.id,
+			});
+		}
+	}
+
+	return processedEvents;
 }
 
-/**
- * Get upcoming events
- */
-router.get("/events", authenticateUser, async (req: any, res) => {
-	try {
-		const { maxResults = 10 } = req.query;
+// Helper function to handle calendar sync
+async function handleCalendarSync(resourceId: string): Promise<void> {
+	// Find user by resource ID
+	const webhookChannel = await prisma.webhookChannel.findFirst({
+		where: { resourceId },
+		include: { user: true },
+	});
 
-		const events = await calendarService.listEvents(
-			req.user.accessToken,
-			req.user.refreshToken,
-			parseInt(maxResults)
-		);
-
-		res.json({ events });
-	} catch (error) {
-		console.error("Failed to fetch events:", error);
-		res.status(500).json({
-			error: "Failed to fetch events",
-			details: error instanceof Error ? error.message : "Unknown error",
+	if (!webhookChannel) {
+		console.warn("No webhook channel found for resource ID", {
+			resourceId,
 		});
+		return;
 	}
-});
 
-/**
- * Create a new event
- */
-router.post("/events", authenticateUser, async (req: any, res) => {
-	try {
-		const { title, description, startTime, endTime, location, attendees } =
-			req.body;
+	const user = webhookChannel.user;
+	const calendarService = createCalendarApiService(user.accessToken || "");
 
-		// Validate required fields
-		if (!title || !startTime || !endTime) {
-			return res.status(400).json({
-				error: "Title, startTime, and endTime are required",
-			});
-		}
+	// Fetch all events and process them
+	const events = await calendarService.getAllEvents("primary");
+	await processAndStoreEvents(
+		events,
+		user.id,
+		"primary",
+		user.accessToken || ""
+	);
 
-		const event: CalendarEvent = {
-			title,
-			description,
-			startTime: new Date(startTime),
-			endTime: new Date(endTime),
-			location,
-			attendees,
-		};
+	console.info("Calendar sync completed", {
+		userId: user.id,
+		eventCount: events.length,
+	});
+}
 
-		// Check for conflicts
-		const conflicts = await calendarService.checkConflicts(
-			req.user.accessToken,
-			event.startTime,
-			event.endTime,
-			req.user.refreshToken
-		);
+// Helper function to handle calendar update
+async function handleCalendarUpdate(resourceId: string): Promise<void> {
+	// Find user by resource ID
+	const webhookChannel = await prisma.webhookChannel.findFirst({
+		where: { resourceId },
+		include: { user: true },
+	});
 
-		// Create event in Google Calendar
-		const googleEventId = await calendarService.createEvent(
-			req.user.accessToken,
-			event,
-			req.user.refreshToken
-		);
-
-		// Store in database
-		const dbEvent = await prisma.event.create({
-			data: {
-				googleId: googleEventId,
-				title: event.title,
-				description: event.description,
-				startTime: event.startTime,
-				endTime: event.endTime,
-				location: event.location,
-				userId: req.user.id,
-			},
+	if (!webhookChannel) {
+		console.warn("No webhook channel found for resource ID", {
+			resourceId,
 		});
-
-		res.json({
-			success: true,
-			event: dbEvent,
-			conflicts: conflicts.length > 0 ? conflicts : undefined,
-		});
-	} catch (error) {
-		console.error("Failed to create event:", error);
-		res.status(500).json({
-			error: "Failed to create event",
-			details: error instanceof Error ? error.message : "Unknown error",
-		});
+		return;
 	}
-});
 
-/**
- * Update an existing event
- */
-router.put("/events/:eventId", authenticateUser, async (req: any, res) => {
-	try {
-		const { eventId } = req.params;
-		const updates = req.body;
+	const user = webhookChannel.user;
+	const calendarService = createCalendarApiService(user.accessToken || "");
 
-		// Find event in database
-		const dbEvent = await prisma.event.findFirst({
-			where: {
-				id: eventId,
-				userId: req.user.id,
-			},
-		});
+	// Fetch recent events and process them
+	const events = await calendarService.getRecentEvents("primary", 1); // Last hour
+	await processAndStoreEvents(
+		events,
+		user.id,
+		"primary",
+		user.accessToken || ""
+	);
 
-		if (!dbEvent || !dbEvent.googleId) {
-			return res.status(404).json({ error: "Event not found" });
-		}
-
-		// Prepare update data
-		const updateData: Partial<CalendarEvent> = {};
-		if (updates.title) updateData.title = updates.title;
-		if (updates.description) updateData.description = updates.description;
-		if (updates.startTime)
-			updateData.startTime = new Date(updates.startTime);
-		if (updates.endTime) updateData.endTime = new Date(updates.endTime);
-		if (updates.location) updateData.location = updates.location;
-		if (updates.attendees) updateData.attendees = updates.attendees;
-
-		// Update in Google Calendar
-		await calendarService.updateEvent(
-			req.user.accessToken,
-			dbEvent.googleId,
-			updateData,
-			req.user.refreshToken
-		);
-
-		// Update in database
-		const updatedEvent = await prisma.event.update({
-			where: { id: eventId },
-			data: {
-				title: updateData.title || dbEvent.title,
-				description: updateData.description || dbEvent.description,
-				startTime: updateData.startTime || dbEvent.startTime,
-				endTime: updateData.endTime || dbEvent.endTime,
-				location: updateData.location || dbEvent.location,
-			},
-		});
-
-		res.json({
-			success: true,
-			event: updatedEvent,
-		});
-	} catch (error) {
-		console.error("Failed to update event:", error);
-		res.status(500).json({
-			error: "Failed to update event",
-			details: error instanceof Error ? error.message : "Unknown error",
-		});
-	}
-});
-
-/**
- * Delete an event
- */
-router.delete("/events/:eventId", authenticateUser, async (req: any, res) => {
-	try {
-		const { eventId } = req.params;
-
-		// Find event in database
-		const dbEvent = await prisma.event.findFirst({
-			where: {
-				id: eventId,
-				userId: req.user.id,
-			},
-		});
-
-		if (!dbEvent) {
-			return res.status(404).json({ error: "Event not found" });
-		}
-
-		// Delete from Google Calendar if it exists
-		if (dbEvent.googleId) {
-			try {
-				await calendarService.deleteEvent(
-					req.user.accessToken,
-					dbEvent.googleId,
-					req.user.refreshToken
-				);
-			} catch (error) {
-				console.warn("Failed to delete from Google Calendar:", error);
-				// Continue with database deletion even if Google Calendar fails
-			}
-		}
-
-		// Delete from database
-		await prisma.event.delete({
-			where: { id: eventId },
-		});
-
-		res.json({
-			success: true,
-			message: "Event deleted successfully",
-		});
-	} catch (error) {
-		console.error("Failed to delete event:", error);
-		res.status(500).json({
-			error: "Failed to delete event",
-			details: error instanceof Error ? error.message : "Unknown error",
-		});
-	}
-});
-
-/**
- * Check for conflicts
- */
-router.post(
-	"/events/check-conflicts",
-	authenticateUser,
-	async (req: any, res) => {
-		try {
-			const { startTime, endTime } = req.body;
-
-			if (!startTime || !endTime) {
-				return res.status(400).json({
-					error: "startTime and endTime are required",
-				});
-			}
-
-			const conflicts = await calendarService.checkConflicts(
-				req.user.accessToken,
-				new Date(startTime),
-				new Date(endTime),
-				req.user.refreshToken
-			);
-
-			res.json({ conflicts });
-		} catch (error) {
-			console.error("Failed to check conflicts:", error);
-			res.status(500).json({
-				error: "Failed to check conflicts",
-				details:
-					error instanceof Error ? error.message : "Unknown error",
-			});
-		}
-	}
-);
-
-/**
- * AI-powered event creation from natural language
- */
-router.post("/ai/create-event", authenticateUser, async (req: any, res) => {
-	try {
-		const { input, autoCreate = false } = req.body;
-
-		if (!input || typeof input !== "string") {
-			return res
-				.status(400)
-				.json({ error: "Natural language input required" });
-		}
-
-		const result = await aiProcessor.processAndCreateEvent(
-			req.user.id,
-			input,
-			req.user.accessToken,
-			req.user.refreshToken,
-			autoCreate
-		);
-
-		res.json({
-			success: true,
-			...result,
-		});
-	} catch (error) {
-		console.error("AI event creation failed:", error);
-		res.status(500).json({
-			error: "Failed to process natural language event",
-			details: error instanceof Error ? error.message : "Unknown error",
-		});
-	}
-});
-
-/**
- * Get AI suggestions for events
- */
-router.get("/ai/suggestions", authenticateUser, async (req: any, res) => {
-	try {
-		const { context } = req.query;
-
-		const suggestions = await aiProcessor.generateSmartSuggestions(
-			req.user.id,
-			context as string
-		);
-
-		res.json({ suggestions });
-	} catch (error) {
-		console.error("Failed to generate suggestions:", error);
-		res.status(500).json({
-			error: "Failed to generate suggestions",
-			details: error instanceof Error ? error.message : "Unknown error",
-		});
-	}
-});
-
-/**
- * Optimize event timing
- */
-router.post("/ai/optimize-timing", authenticateUser, async (req: any, res) => {
-	try {
-		const { eventText } = req.body;
-
-		if (!eventText) {
-			return res.status(400).json({ error: "Event text required" });
-		}
-
-		const optimization = await aiProcessor.optimizeEventTiming(
-			req.user.id,
-			eventText
-		);
-
-		res.json(optimization);
-	} catch (error) {
-		console.error("Failed to optimize timing:", error);
-		res.status(500).json({
-			error: "Failed to optimize event timing",
-			details: error instanceof Error ? error.message : "Unknown error",
-		});
-	}
-});
-
-/**
- * Batch process multiple events
- */
-router.post("/ai/batch-process", authenticateUser, async (req: any, res) => {
-	try {
-		const { inputs } = req.body;
-
-		if (!Array.isArray(inputs) || inputs.length === 0) {
-			return res
-				.status(400)
-				.json({ error: "Array of event inputs required" });
-		}
-
-		if (inputs.length > 10) {
-			return res
-				.status(400)
-				.json({ error: "Maximum 10 events per batch" });
-		}
-
-		const results = await aiProcessor.batchProcessEvents(
-			req.user.id,
-			inputs,
-			req.user.accessToken,
-			req.user.refreshToken
-		);
-
-		res.json({
-			success: true,
-			results,
-			processed: results.length,
-			total: inputs.length,
-		});
-	} catch (error) {
-		console.error("Batch processing failed:", error);
-		res.status(500).json({
-			error: "Failed to batch process events",
-			details: error instanceof Error ? error.message : "Unknown error",
-		});
-	}
-});
-
-/**
- * Get AI processing statistics
- */
-router.get("/ai/stats", authenticateUser, async (req: any, res) => {
-	try {
-		const stats = await aiProcessor.getProcessingStats(req.user.id);
-		res.json(stats);
-	} catch (error) {
-		console.error("Failed to get AI stats:", error);
-		res.status(500).json({
-			error: "Failed to get processing statistics",
-			details: error instanceof Error ? error.message : "Unknown error",
-		});
-	}
-});
+	console.info("Calendar update processed", {
+		userId: user.id,
+		eventCount: events.length,
+	});
+}
 
 export default router;

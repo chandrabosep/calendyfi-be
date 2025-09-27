@@ -1,4 +1,3 @@
-import { logger } from "../utils/logger";
 import { prisma, withRetry } from "../db/client";
 import { PrivyService } from "./wallet/privy-service";
 import { SafeService } from "./wallet/safe-service";
@@ -32,7 +31,7 @@ export class TransactionExecutor {
 		error?: string;
 	}> {
 		try {
-			logger.info("Executing transaction from event", { eventId });
+			console.info("Executing transaction from event", { eventId });
 
 			// Get the event with parsed data
 			const event = await prisma.calendarEvent.findUnique({
@@ -102,13 +101,13 @@ export class TransactionExecutor {
 					);
 					if (matchingChain) {
 						walletChain = matchingChain;
-						logger.info("Selected chain based on AI command", {
+						console.info("Selected chain based on AI command", {
 							requestedChain: event.parsedChain,
 							selectedChainId: walletChain.chainId,
 							smartAccount: walletChain.smartAccount,
 						});
 					} else {
-						logger.warn(
+						console.warn(
 							"Requested chain not available, using default",
 							{
 								requestedChain: event.parsedChain,
@@ -152,14 +151,14 @@ export class TransactionExecutor {
 				},
 			});
 
-			logger.info("Transaction executed successfully", {
+			console.info("Transaction executed successfully", {
 				eventId,
 				transactionHash: result.transactionHash,
 			});
 
 			return result;
 		} catch (error) {
-			logger.error("Failed to execute transaction from event", {
+			console.error("Failed to execute transaction from event", {
 				error,
 				eventId,
 			});
@@ -204,15 +203,15 @@ export class TransactionExecutor {
 
 				case "swap":
 					// For now, return null - swap implementation would require DEX integration
-					logger.warn("Swap transactions not yet implemented");
+					console.warn("Swap transactions not yet implemented");
 					return null;
 
 				default:
-					logger.warn("Unknown transaction type", { parsedAction });
+					console.warn("Unknown transaction type", { parsedAction });
 					return null;
 			}
 		} catch (error) {
-			logger.error("Failed to build transaction from event", {
+			console.error("Failed to build transaction from event", {
 				error: error instanceof Error ? error.message : error,
 				stack: error instanceof Error ? error.stack : undefined,
 				event: {
@@ -239,7 +238,7 @@ export class TransactionExecutor {
 	): Promise<{ to: string; value: string; data: string } | null> {
 		try {
 			if (!parsedRecipient || !parsedAmount) {
-				logger.warn("Missing required fields for transfer", {
+				console.warn("Missing required fields for transfer", {
 					parsedRecipient,
 					parsedAmount,
 				});
@@ -252,7 +251,7 @@ export class TransactionExecutor {
 				try {
 					parsedRecipientObj = JSON.parse(parsedRecipient);
 				} catch (error) {
-					logger.warn("Failed to parse recipient JSON", {
+					console.warn("Failed to parse recipient JSON", {
 						parsedRecipient,
 					});
 					return null;
@@ -265,7 +264,7 @@ export class TransactionExecutor {
 				try {
 					parsedAmountObj = JSON.parse(parsedAmount);
 				} catch (error) {
-					logger.warn("Failed to parse amount JSON", {
+					console.warn("Failed to parse amount JSON", {
 						parsedAmount,
 					});
 					return null;
@@ -287,7 +286,7 @@ export class TransactionExecutor {
 					chainId
 				);
 
-			logger.info("Recipient resolution result", {
+			console.info("Recipient resolution result", {
 				originalInput: recipientInput,
 				resolvedAddress: resolutionResult.address,
 				service: resolutionResult.service,
@@ -308,7 +307,7 @@ export class TransactionExecutor {
 			// Get token information
 			const tokenInfo = this.tokenService.getTokenInfo(currency, chainId);
 			if (!tokenInfo) {
-				logger.warn("Unsupported token", { currency, chainId });
+				console.warn("Unsupported token", { currency, chainId });
 				return null;
 			}
 
@@ -328,7 +327,7 @@ export class TransactionExecutor {
 			const transaction =
 				this.tokenService.buildTokenTransferTransaction(tokenTransfer);
 
-			logger.info("Built token transfer transaction", {
+			console.info("Built token transfer transaction", {
 				token: tokenInfo.symbol,
 				amount: tokenAmount,
 				recipient: resolutionResult.address,
@@ -339,7 +338,7 @@ export class TransactionExecutor {
 
 			return transaction;
 		} catch (error) {
-			logger.error("Failed to build transfer transaction", {
+			console.error("Failed to build transfer transaction", {
 				error: error instanceof Error ? error.message : error,
 				stack: error instanceof Error ? error.stack : undefined,
 				parsedAmount,
@@ -391,7 +390,7 @@ export class TransactionExecutor {
 		try {
 			// Check if chain supports Safe Protocol Kit
 			if (this.safeService.isSafeCompatible(walletChain.chainId)) {
-				logger.info("Executing transaction via Safe", {
+				console.info("Executing transaction via Safe", {
 					walletId: wallet.id,
 					transaction,
 					chainId: walletChain.chainId,
@@ -404,7 +403,7 @@ export class TransactionExecutor {
 				);
 
 				if (!isDeployed) {
-					logger.error(
+					console.error(
 						"Safe is not deployed at the specified address",
 						{
 							chainId: walletChain.chainId,
@@ -425,7 +424,7 @@ export class TransactionExecutor {
 				);
 
 				if (!balanceCheck.sufficient) {
-					logger.warn(
+					console.warn(
 						"Insufficient Safe balance, attempting to fund",
 						{
 							chainId: walletChain.chainId,
@@ -445,7 +444,7 @@ export class TransactionExecutor {
 					);
 
 					if (!fundingResult.success) {
-						logger.error("Failed to fund Safe contract", {
+						console.error("Failed to fund Safe contract", {
 							chainId: walletChain.chainId,
 							safeAddress: walletChain.smartAccount,
 							fundingError: fundingResult.error,
@@ -475,14 +474,14 @@ export class TransactionExecutor {
 						};
 					}
 
-					logger.info("Safe contract funded successfully", {
+					console.info("Safe contract funded successfully", {
 						chainId: walletChain.chainId,
 						safeAddress: walletChain.smartAccount,
 						fundingTxHash: fundingResult.transactionHash,
 					});
 				}
 			} else {
-				logger.info("Executing transaction via Custom Smart Account", {
+				console.info("Executing transaction via Custom Smart Account", {
 					walletId: wallet.id,
 					transaction,
 					chainId: walletChain.chainId,
@@ -538,7 +537,7 @@ export class TransactionExecutor {
 				],
 			};
 
-			logger.info("Signing transaction hash", {
+			console.info("Signing transaction hash", {
 				txHash,
 				safeDomain,
 				agentWalletId: wallet.agentWalletId,
@@ -558,7 +557,7 @@ export class TransactionExecutor {
 				nonce: safeTransaction.data.nonce,
 			};
 
-			logger.info("Signing Safe transaction with message", {
+			console.info("Signing Safe transaction with message", {
 				safeMessage,
 				safeDomain,
 				agentWalletId: wallet.agentWalletId,
@@ -587,7 +586,7 @@ export class TransactionExecutor {
 				transactionHash: executionHash,
 			};
 		} catch (error) {
-			logger.error("Failed to execute transaction", { error });
+			console.error("Failed to execute transaction", { error });
 			return {
 				success: false,
 				error: error instanceof Error ? error.message : "Unknown error",
@@ -604,7 +603,7 @@ export class TransactionExecutor {
 		failed: number;
 	}> {
 		try {
-			logger.info("Processing scheduled transactions");
+			console.info("Processing scheduled transactions");
 
 			const now = new Date();
 			const scheduledEvents = await withRetry(async () => {
@@ -624,7 +623,7 @@ export class TransactionExecutor {
 				});
 			});
 
-			logger.info("Found scheduled events", {
+			console.info("Found scheduled events", {
 				count: scheduledEvents.length,
 			});
 
@@ -640,21 +639,21 @@ export class TransactionExecutor {
 						successful++;
 					} else {
 						failed++;
-						logger.warn("Failed to execute scheduled transaction", {
+						console.warn("Failed to execute scheduled transaction", {
 							eventId: event.id,
 							error: result.error,
 						});
 					}
 				} catch (error) {
 					failed++;
-					logger.error("Error processing scheduled event", {
+					console.error("Error processing scheduled event", {
 						eventId: event.id,
 						error,
 					});
 				}
 			}
 
-			logger.info("Scheduled transactions processing completed", {
+			console.info("Scheduled transactions processing completed", {
 				processed: scheduledEvents.length,
 				successful,
 				failed,
@@ -666,7 +665,7 @@ export class TransactionExecutor {
 				failed,
 			};
 		} catch (error) {
-			logger.error("Failed to process scheduled transactions", { error });
+			console.error("Failed to process scheduled transactions", { error });
 			return { processed: 0, successful: 0, failed: 0 };
 		}
 	}
@@ -708,7 +707,7 @@ export class TransactionExecutor {
 
 			const sufficient = BigInt(currentBalance) >= requiredAmount;
 
-			logger.info("Safe balance check", {
+			console.info("Safe balance check", {
 				chainId,
 				safeAddress,
 				currentBalance,
@@ -728,7 +727,7 @@ export class TransactionExecutor {
 				gasEstimate,
 			};
 		} catch (error) {
-			logger.error("Failed to check Safe balance", {
+			console.error("Failed to check Safe balance", {
 				error: error instanceof Error ? error.message : error,
 				chainId,
 				safeAddress,
@@ -756,7 +755,7 @@ export class TransactionExecutor {
 			const feeData = await provider.getFeeData();
 
 			if (feeData.gasPrice) {
-				logger.info("Using network gas price", {
+				console.info("Using network gas price", {
 					chainId,
 					gasPrice: feeData.gasPrice.toString(),
 					gasPriceGwei: (Number(feeData.gasPrice) / 1e9).toFixed(2),
@@ -775,7 +774,7 @@ export class TransactionExecutor {
 			const defaultGasPrice =
 				defaultGasPrices[chainId] || BigInt("20000000000"); // 20 gwei default
 
-			logger.info("Using default gas price", {
+			console.info("Using default gas price", {
 				chainId,
 				gasPrice: defaultGasPrice.toString(),
 				gasPriceGwei: (Number(defaultGasPrice) / 1e9).toFixed(2),
@@ -783,7 +782,7 @@ export class TransactionExecutor {
 
 			return defaultGasPrice;
 		} catch (error) {
-			logger.warn("Failed to get gas price, using conservative default", {
+			console.warn("Failed to get gas price, using conservative default", {
 				error: error instanceof Error ? error.message : error,
 				chainId,
 			});
@@ -827,7 +826,7 @@ export class TransactionExecutor {
 
 			return gasEstimate.toString();
 		} catch (error) {
-			logger.warn("Failed to estimate gas, using default", {
+			console.warn("Failed to estimate gas, using default", {
 				error: error instanceof Error ? error.message : error,
 				chainId,
 				safeAddress,
@@ -847,7 +846,7 @@ export class TransactionExecutor {
 		requiredAmount: string
 	): Promise<{ success: boolean; transactionHash?: string; error?: string }> {
 		try {
-			logger.info("Funding Safe contract", {
+			console.info("Funding Safe contract", {
 				chainId,
 				safeAddress,
 				requiredAmount,
@@ -870,7 +869,7 @@ export class TransactionExecutor {
 				BigInt(requiredAmount) + BigInt("1000000000000000000"); // Add 1 RBTC buffer
 
 			if (deployerBalance < fundingAmount) {
-				logger.error("Deployer wallet has insufficient balance", {
+				console.error("Deployer wallet has insufficient balance", {
 					chainId,
 					deployerAddress: deployerWallet.address,
 					deployerBalance: deployerBalance.toString(),
@@ -890,7 +889,7 @@ export class TransactionExecutor {
 
 			await fundingTx.wait();
 
-			logger.info("Safe contract funded successfully", {
+			console.info("Safe contract funded successfully", {
 				chainId,
 				safeAddress,
 				fundingAmount: fundingAmount.toString(),
@@ -902,7 +901,7 @@ export class TransactionExecutor {
 				transactionHash: fundingTx.hash,
 			};
 		} catch (error) {
-			logger.error("Failed to fund Safe contract", {
+			console.error("Failed to fund Safe contract", {
 				error: error instanceof Error ? error.message : error,
 				chainId,
 				safeAddress,
@@ -927,7 +926,7 @@ export class TransactionExecutor {
 		transaction: { to: string; value: string; data: string }
 	): Promise<{ success: boolean; transactionHash?: string; error?: string }> {
 		try {
-			logger.info("Executing transaction via Custom Smart Account", {
+			console.info("Executing transaction via Custom Smart Account", {
 				walletId: wallet.id,
 				chainId: walletChain.chainId,
 				smartAccount: walletChain.smartAccount,
@@ -943,7 +942,7 @@ export class TransactionExecutor {
 					wallet.agentWalletId
 				);
 
-			logger.info(
+			console.info(
 				"Custom Smart Account transaction executed successfully",
 				{
 					chainId: walletChain.chainId,
@@ -956,7 +955,7 @@ export class TransactionExecutor {
 				transactionHash,
 			};
 		} catch (error) {
-			logger.error("Failed to execute custom smart account transaction", {
+			console.error("Failed to execute custom smart account transaction", {
 				error,
 				chainId: walletChain.chainId,
 			});
@@ -1028,7 +1027,7 @@ export class TransactionExecutor {
 				chainId: walletChain.chainId,
 			};
 		} catch (error) {
-			logger.error("Failed to get Safe balance info", {
+			console.error("Failed to get Safe balance info", {
 				error: error instanceof Error ? error.message : error,
 				userId,
 				chainId,

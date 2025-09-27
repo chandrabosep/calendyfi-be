@@ -64,7 +64,7 @@ export class CustomSmartAccountService {
 
 	/**
 	 * Deploy a simple multi-sig contract for unsupported chains
-	 * This deploys an actual smart contract that implements basic multi-sig functionality
+	 * This creates a smart wallet with its own private key
 	 */
 	async deployCustomSmartAccount(
 		chainId: number,
@@ -72,61 +72,30 @@ export class CustomSmartAccountService {
 		threshold: number = 1
 	): Promise<string> {
 		try {
-			console.log("Deploying custom smart account", {
+			console.info("Deploying custom smart account", {
 				chainId,
 				owners,
 				threshold,
 			});
 
-			const deployerSigner = this.getDeployerSigner(chainId);
-			const provider = this.getProvider(chainId);
+			// Generate a new wallet for the smart account
+			const smartAccountWallet = ethers.Wallet.createRandom();
 
-			// Simple contract bytecode - just a basic contract that stores a value
-			// This is a minimal valid contract bytecode
-			const contractBytecode =
-				"0x608060405234801561001057600080fd5b50610150806100206000396000f3fe608060405234801561001057600080fd5b50600436106100365760003560e01c80636057361d1461003b578063a9059cbb14610057575b600080fd5b610055600480360381019061005091906100c3565b610073565b005b610071600480360381019061006c91906100c3565b610079565b005b50565b5050565b600080fd5b600073ffffffffffffffffffffffffffffffffffffffff82169050919050565b60006100a98261007e565b9050919050565b6100b98161009e565b81146100c457600080fd5b50565b6000813590506100d6816100b0565b92915050565b6000602082840312156100f2576100f1610079565b5b6000610100848285016100c7565b9150509291505056fea2646970667358221220";
-
-			// Simple ABI for the contract
-			const contractABI = [
-				"function setValue(uint256 value) public",
-				"function getValue() public view returns (uint256)",
-			];
-
-			// Deploy the contract
-			const factory = new ethers.ContractFactory(
-				contractABI,
-				contractBytecode,
-				deployerSigner
-			);
-
-			const contract = await factory.deploy();
-			await contract.waitForDeployment();
-
-			const contractAddress = await contract.getAddress();
-
-			// Verify the contract was actually deployed
-			const code = await provider.getCode(contractAddress);
-			if (code === "0x") {
-				throw new Error(
-					`Custom smart account contract was not deployed at address ${contractAddress}`
-				);
-			}
-
-			console.log("Custom smart account deployed", {
+			console.info("Custom smart account created", {
 				chainId,
-				address: contractAddress,
+				address: smartAccountWallet.address,
 				owners,
 				threshold,
-				contractCodeLength: code.length,
 			});
 
-			// Store the contract address (no private key needed for contracts)
+			// Store the private key securely in the database
+			// This will be used to sign transactions from the smart wallet
 			await this.storeSmartWalletPrivateKey(
-				contractAddress,
-				"CONTRACT_DEPLOYED" // Placeholder since contracts don't have private keys
+				smartAccountWallet.address,
+				smartAccountWallet.privateKey
 			);
 
-			return contractAddress;
+			return smartAccountWallet.address;
 		} catch (error) {
 			console.error("Custom smart account deployment failed:", error);
 			throw new Error(
@@ -161,7 +130,7 @@ export class CustomSmartAccountService {
 				},
 			});
 
-			console.log("Smart wallet private key stored securely", {
+			console.info("Smart wallet private key stored securely", {
 				address,
 			});
 		} catch (error) {
@@ -192,10 +161,7 @@ export class CustomSmartAccountService {
 			const privateKey = decrypt(keyRecord.encryptedPrivateKey);
 			return privateKey;
 		} catch (error) {
-			console.error(
-				"Failed to retrieve smart wallet private key:",
-				error
-			);
+			console.error("Failed to retrieve smart wallet private key:", error);
 			throw new Error("Smart wallet private key retrieval failed");
 		}
 	}
@@ -215,7 +181,7 @@ export class CustomSmartAccountService {
 		agentWalletId: string
 	): Promise<string> {
 		try {
-			console.log("Executing custom smart account transaction", {
+			console.info("Executing custom smart account transaction", {
 				chainId,
 				smartAccountAddress,
 				transactions,
@@ -228,7 +194,7 @@ export class CustomSmartAccountService {
 				throw new Error("No transaction provided");
 			}
 
-			console.log("Creating smart wallet transaction", {
+			console.info("Creating smart wallet transaction", {
 				smartAccountAddress,
 				to: transaction.to,
 				value: transaction.value,
@@ -258,7 +224,7 @@ export class CustomSmartAccountService {
 
 			await txResponse.wait();
 
-			console.log("Smart wallet transaction executed successfully", {
+			console.info("Smart wallet transaction executed successfully", {
 				hash: txResponse.hash,
 				chainId,
 				smartAccountAddress,

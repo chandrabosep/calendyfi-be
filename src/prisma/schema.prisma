@@ -37,25 +37,25 @@ model CalendarEvent {
   location            String?
   attendees           Json?
   isAiEvent           Boolean   @default(false)
-  parsedIntent        String?
-  parsedAction        String?
-  parsedAmount        Json?
-  parsedRecipient     Json?
-  parsedFromToken     String?
-  parsedToToken       String?
-  parsedProtocol      String?
-  parsedChain         String?
-  parsedParticipants  Json?
-  parsedPool          String?
-  parsedPlatform      String?
-  parsedConfidence    Float?
-  parsedScheduledTime DateTime?
-  parsedCommandRaw    Json?
-  isExecuted          Boolean   @default(false)
-  executionHash       String?
-  executedAt          DateTime?
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
+  parsedAction        String?
+  parsedAmount        Json?
+  parsedChain         String?
+  parsedCommandRaw    Json?
+  parsedConfidence    Float?
+  parsedFromToken     String?
+  parsedIntent        String?
+  parsedParticipants  Json?
+  parsedPlatform      String?
+  parsedPool          String?
+  parsedProtocol      String?
+  parsedRecipient     Json?
+  parsedScheduledTime DateTime?
+  parsedToToken       String?
+  executedAt          DateTime?
+  executionHash       String?
+  isExecuted          Boolean   @default(false)
   user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("calendar_events")

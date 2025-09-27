@@ -1,278 +1,151 @@
-import { GeminiService, ParsedEventData } from "./gemini-service";
-import { CalendarApiService } from "./calendar-api";
-import prisma from "../db/client";
+import { ParsedAiCommand } from "../types";
+import { GeminiService } from "./gemini-service";
 
-export interface ProcessedEvent {
-	parsed: ParsedEventData;
-	conflicts?: Array<{ title: string; startTime: Date; endTime: Date }>;
-	conflictAnalysis?: {
-		severity: "low" | "medium" | "high";
-		suggestions: string[];
-	};
-	dbEvent?: any;
-	googleEventId?: string;
-}
-
-export class AIEventProcessor {
+export class AiEventProcessor {
 	private geminiService: GeminiService;
-	private calendarService: CalendarApiService;
 
 	constructor() {
 		this.geminiService = new GeminiService();
-		this.calendarService = new CalendarApiService();
 	}
 
 	/**
-	 * Process natural language input and create event
+	 * Process an AI event by parsing the command and determining next steps
 	 */
-	async processAndCreateEvent(
+	async processAiEvent(
+		eventText: string,
 		userId: string,
-		input: string,
-		accessToken: string,
-		refreshToken?: string,
-		autoCreate: boolean = false
-	): Promise<ProcessedEvent> {
-		try {
-			// Parse the natural language input
-			const parsed = await this.geminiService.parseEventFromText(input);
-
-			// Check for conflicts
-			const conflicts = await this.calendarService.checkConflicts(
-				accessToken,
-				new Date(parsed.startTime),
-				new Date(parsed.endTime),
-				refreshToken
-			);
-
-			let conflictAnalysis;
-			if (conflicts.length > 0) {
-				conflictAnalysis = await this.geminiService.analyzeConflicts(
-					{
-						title: parsed.title,
-						startTime: new Date(parsed.startTime),
-						endTime: new Date(parsed.endTime),
-					},
-					conflicts
-				);
-			}
-
-			const result: ProcessedEvent = {
-				parsed,
-				conflicts: conflicts.length > 0 ? conflicts : undefined,
-				conflictAnalysis,
-			};
-
-			// Auto-create if requested and no high-severity conflicts
-			if (
-				autoCreate &&
-				(!conflictAnalysis || conflictAnalysis.severity !== "high")
-			) {
-				try {
-					// Create in Google Calendar
-					const googleEventId =
-						await this.calendarService.createEvent(
-							accessToken,
-							{
-								title: parsed.title,
-								description: parsed.description,
-								startTime: new Date(parsed.startTime),
-								endTime: new Date(parsed.endTime),
-								location: parsed.location,
-								attendees: parsed.attendees,
-							},
-							refreshToken
-						);
-
-					// Save to database
-					const dbEvent = await prisma.event.create({
-						data: {
-							googleId: googleEventId,
-							title: parsed.title,
-							description: parsed.description,
-							startTime: new Date(parsed.startTime),
-							endTime: new Date(parsed.endTime),
-							location: parsed.location,
-							rawInput: input,
-							aiProcessed: true,
-							confidence: parsed.confidence,
-							suggestedChanges: parsed.suggestions
-								? { suggestions: parsed.suggestions }
-								: null,
-							userId,
-						},
-					});
-
-					result.dbEvent = dbEvent;
-					result.googleEventId = googleEventId;
-				} catch (createError) {
-					console.error("Failed to auto-create event:", createError);
-					// Don't throw here, return the parsed data anyway
-				}
-			}
-
-			return result;
-		} catch (error) {
-			console.error("Failed to process event:", error);
-			throw new Error("Failed to process natural language event");
-		}
-	}
-
-	/**
-	 * Generate smart suggestions for user
-	 */
-	async generateSmartSuggestions(
-		userId: string,
-		context?: string
-	): Promise<string[]> {
-		try {
-			// Get user's recent events
-			const recentEvents = await prisma.event.findMany({
-				where: { userId },
-				orderBy: { startTime: "desc" },
-				take: 10,
-				select: {
-					title: true,
-					startTime: true,
-					endTime: true,
-				},
-			});
-
-			if (recentEvents.length === 0) {
-				return [
-					"Daily standup meeting tomorrow at 9 AM",
-					"Lunch with team on Friday",
-					"Review meeting next week",
-					"Project deadline reminder",
-				];
-			}
-
-			return await this.geminiService.generateEventSuggestions(
-				recentEvents,
-				context
-			);
-		} catch (error) {
-			console.error("Failed to generate suggestions:", error);
-			return [];
-		}
-	}
-
-	/**
-	 * Optimize event timing based on user patterns
-	 */
-	async optimizeEventTiming(
-		userId: string,
-		eventText: string
+		eventId?: string,
+		scheduledTime?: Date
 	): Promise<{
-		originalParsing: ParsedEventData;
-		optimizedSuggestions: Array<{
-			startTime: string;
-			endTime: string;
-			reason: string;
-		}>;
+		success: boolean;
+		parsedCommand?: ParsedAiCommand;
+		nextSteps?: string[];
+		error?: string;
 	}> {
 		try {
-			// Get user preferences (could be from database in future)
-			const userPreferences = {
-				workingHours: { start: "09:00", end: "17:00" },
-				timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-				preferredMeetingDuration: 60, // minutes
-			};
-
-			return await this.geminiService.optimizeEventTiming(
-				eventText,
-				userPreferences
-			);
-		} catch (error) {
-			console.error("Failed to optimize timing:", error);
-			const originalParsing = await this.geminiService.parseEventFromText(
-				eventText
-			);
-			return { originalParsing, optimizedSuggestions: [] };
-		}
-	}
-
-	/**
-	 * Batch process multiple events
-	 */
-	async batchProcessEvents(
-		userId: string,
-		inputs: string[],
-		accessToken: string,
-		refreshToken?: string
-	): Promise<ProcessedEvent[]> {
-		const results: ProcessedEvent[] = [];
-
-		for (const input of inputs) {
-			try {
-				const result = await this.processAndCreateEvent(
-					userId,
-					input,
-					accessToken,
-					refreshToken,
-					false // Don't auto-create for batch processing
-				);
-				results.push(result);
-			} catch (error) {
-				console.error(`Failed to process: "${input}"`, error);
-				// Continue with other events
-			}
-		}
-
-		return results;
-	}
-
-	/**
-	 * Get AI processing statistics for user
-	 */
-	async getProcessingStats(userId: string): Promise<{
-		totalProcessed: number;
-		averageConfidence: number;
-		recentActivity: Array<{
-			date: Date;
-			input: string;
-			success: boolean;
-			confidence: number;
-		}>;
-	}> {
-		try {
-			const events = await prisma.event.findMany({
-				where: {
-					userId,
-					aiProcessed: true,
-				},
-				select: {
-					rawInput: true,
-					confidence: true,
-					createdAt: true,
-				},
-				orderBy: { createdAt: "desc" },
-				take: 50,
+			console.info("Processing AI event", {
+				userId,
+				eventId,
+				eventText: eventText.substring(0, 100),
+				scheduledTime: scheduledTime?.toISOString(),
+				scheduledTimeProvided: !!scheduledTime,
 			});
 
-			const totalProcessed = events.length;
-			const averageConfidence =
-				events.reduce((sum, e) => sum + (e.confidence || 0), 0) /
-				Math.max(1, totalProcessed);
+			// Parse the command using Gemini
+			const parseResult = await this.geminiService.parseAiCommand(
+				eventText,
+				userId,
+				eventId,
+				scheduledTime
+			);
 
-			const recentActivity = events.slice(0, 10).map((event) => ({
-				date: event.createdAt,
-				input: event.rawInput || "",
-				success: true,
-				confidence: event.confidence || 0,
-			}));
+			if (!parseResult.success || !parseResult.parsedCommand) {
+				return {
+					success: false,
+					error: parseResult.error || "Failed to parse command",
+				};
+			}
+
+			const parsedCommand = parseResult.parsedCommand;
+
+			// Determine next steps based on the parsed command
+			const nextSteps = this.determineNextSteps(parsedCommand);
+
+			// Log the successful processing
+			console.info("AI event processed successfully", {
+				userId,
+				eventId,
+				intent: parsedCommand.intent.type,
+				action: parsedCommand.action.type,
+				confidence: parsedCommand.confidence,
+				scheduledTime: parsedCommand.scheduledTime?.toISOString(),
+				nextStepsCount: nextSteps.length,
+			});
 
 			return {
-				totalProcessed,
-				averageConfidence,
-				recentActivity,
+				success: true,
+				parsedCommand,
+				nextSteps,
 			};
 		} catch (error) {
-			console.error("Failed to get processing stats:", error);
+			console.error("Failed to process AI event", {
+				error,
+				userId,
+				eventId,
+			});
+
 			return {
-				totalProcessed: 0,
-				averageConfidence: 0,
-				recentActivity: [],
+				success: false,
+				error: error instanceof Error ? error.message : "Unknown error",
 			};
 		}
 	}
+
+	/**
+	 * Determine the next steps based on the parsed command
+	 */
+	private determineNextSteps(parsedCommand: ParsedAiCommand): string[] {
+		const { intent, action, parameters } = parsedCommand;
+		const steps: string[] = [];
+
+		// Add validation steps
+		steps.push("Validate user wallet connection");
+		steps.push("Check sufficient balance for transaction");
+
+		// Add intent-specific steps
+		switch (intent.type) {
+			case "payment":
+			case "transfer":
+				steps.push("Resolve recipient address (ENS/username)");
+				steps.push("Validate recipient address format");
+				steps.push("Calculate gas fees");
+				steps.push("Execute transfer transaction");
+				break;
+
+			case "swap":
+				steps.push("Get current exchange rates");
+				steps.push("Calculate optimal swap route");
+				steps.push("Approve token spending (if needed)");
+				steps.push("Execute swap transaction");
+				break;
+
+			case "split":
+				steps.push("Resolve all participant addresses");
+				steps.push("Calculate individual amounts");
+				steps.push("Validate all recipient addresses");
+				steps.push("Execute batch transfer");
+				break;
+
+			case "defi":
+			case "stake":
+				steps.push("Connect to staking protocol");
+				steps.push("Approve token spending");
+				steps.push("Execute staking transaction");
+				steps.push("Monitor staking status");
+				break;
+
+			case "deposit":
+				steps.push("Connect to lending protocol");
+				steps.push("Approve token spending");
+				steps.push("Execute deposit transaction");
+				steps.push("Update lending position");
+				break;
+
+			default:
+				steps.push("Determine appropriate action");
+				steps.push("Execute command");
+		}
+
+		// Add post-execution steps
+		steps.push("Monitor transaction status");
+		steps.push("Update user balance");
+		steps.push("Log transaction details");
+		steps.push("Send confirmation notification");
+
+		return steps;
+	}
+}
+
+export function createAiEventProcessor(): AiEventProcessor {
+	return new AiEventProcessor();
 }

@@ -7,7 +7,12 @@
 		"build": "tsc",
 		"start": "node dist/src/server.js",
 		"dev": "nodemon --exec ts-node src/server.ts",
-		"test": "jest"
+		"test": "jest",
+		"db:generate": "prisma generate --schema=src/prisma/schema.prisma",
+		"db:migrate": "prisma migrate dev --schema=src/prisma/schema.prisma",
+		"db:deploy": "prisma migrate deploy --schema=src/prisma/schema.prisma",
+		"db:reset": "prisma migrate reset --schema=src/prisma/schema.prisma",
+		"db:studio": "prisma studio --schema=src/prisma/schema.prisma"
 	},
 	"keywords": [
 		"ai",

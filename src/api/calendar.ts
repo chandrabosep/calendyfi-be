@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import { CalendarApiService, createCalendarApiService } from "../services/calendar-api";
+import { createCalendarApiService } from "../services/calendar-api";
 import { prisma } from "../db/client";
 import { decrypt } from "../utils/encryption";
 import { ApiResponse } from "../types";
@@ -420,9 +420,7 @@ async function handleCalendarSync(resourceId: string): Promise<void> {
 	});
 
 	if (!webhookChannel) {
-		console.warn("No webhook channel found for resource ID", {
-			resourceId,
-		});
+		console.warn("No webhook channel found for resource ID", { resourceId });
 		return;
 	}
 
@@ -453,9 +451,7 @@ async function handleCalendarUpdate(resourceId: string): Promise<void> {
 	});
 
 	if (!webhookChannel) {
-		console.warn("No webhook channel found for resource ID", {
-			resourceId,
-		});
+		console.warn("No webhook channel found for resource ID", { resourceId });
 		return;
 	}
 

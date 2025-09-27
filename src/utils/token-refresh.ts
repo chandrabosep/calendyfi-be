@@ -46,7 +46,7 @@ export class TokenRefreshService {
 				},
 			});
 
-			console.log("Token refreshed successfully", {
+			console.info("Token refreshed successfully", {
 				userId,
 				expiresAt: tokenExpiry,
 			});
@@ -88,7 +88,7 @@ export class TokenRefreshService {
 				}
 			}
 
-			console.log("Batch token refresh completed", {
+			console.info("Batch token refresh completed", {
 				totalUsers: expiredUsers.length,
 				refreshed,
 				failed,

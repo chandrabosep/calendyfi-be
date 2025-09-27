@@ -1,7 +1,7 @@
 import { google } from "googleapis";
 import { GoogleCalendarEvent, CalendarEventData } from "../types";
-import { createAiEventProcessor } from "./ai-event-processor";
 import { isAiEvent } from "../utils/logger";
+import { createAiEventProcessor } from "./ai-event-processor";
 
 export class CalendarApiService {
 	public calendar: any;

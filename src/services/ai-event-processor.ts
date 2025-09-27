@@ -1,4 +1,4 @@
-import { ParsedAiCommand } from "../types";
+import { ParsedAiCommand, AiIntent, AiAction, AiParameters } from "../types";
 import { GeminiService } from "./gemini-service";
 
 export class AiEventProcessor {

@@ -6,7 +6,8 @@
 	"scripts": {
 		"build": "tsc",
 		"dev": "tsx watch src/server.ts",
-		"detect": "tsx scripts/ai-only-detector.ts",
+		"detect": "tsx src/scripts/ai-only-detector.ts",
+		"test:flow": "tsx src/scripts/test-flow-scheduler.ts",
 		"db:generate": "prisma generate",
 		"db:push": "prisma db push",
 		"db:migrate": "prisma migrate dev"
@@ -21,6 +22,8 @@
 	"license": "MIT",
 	"dependencies": {
 		"@google/generative-ai": "^0.24.1",
+		"@onflow/fcl": "^1.12.2",
+		"@onflow/types": "^1.0.5",
 		"@prisma/client": "^6.16.2",
 		"@privy-io/server-auth": "^1.32.3",
 		"@safe-global/api-kit": "^4.0.0",

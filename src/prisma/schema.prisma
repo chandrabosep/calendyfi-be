@@ -10,17 +10,18 @@ datasource db {
 }
 
 model User {
-  id              String           @id @default(cuid())
-  email           String           @unique
-  name            String?
-  googleId        String           @unique
-  refreshToken    String
-  accessToken     String?
-  tokenExpiry     DateTime?
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-  events          CalendarEvent[]
-  webhookChannels WebhookChannel[]
+  id                    String                 @id @default(cuid())
+  email                 String                 @unique
+  name                  String?
+  googleId              String                 @unique
+  refreshToken          String
+  accessToken           String?
+  tokenExpiry           DateTime?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  events                CalendarEvent[]
+  webhookChannels       WebhookChannel[]
+  flowScheduledPayments FlowScheduledPayment[]
 
   @@map("users")
 }
@@ -56,6 +57,9 @@ model CalendarEvent {
   executedAt          DateTime?
   executionHash       String?
   isExecuted          Boolean   @default(false)
+  flowScheduleId      String?
+  flowEvmTxHash       String?
+  flowCadenceTxId     String?
   user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("calendar_events")
@@ -111,6 +115,29 @@ model AgentWalletKey {
   updatedAt           DateTime @updatedAt
 
   @@map("agent_wallet_keys")
+}
+
+model FlowScheduledPayment {
+  id            String    @id @default(cuid())
+  scheduleId    String    @unique
+  userId        String
+  recipient     String
+  amount        String
+  delaySeconds  Int
+  scheduledTime DateTime
+  method        String    @default("evm") // "evm" or "cadence"
+  evmTxHash     String?
+  cadenceTxId   String?
+  eventId       String?
+  description   String?
+  executed      Boolean   @default(false)
+  executedAt    DateTime?
+  executionTxId String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("flow_scheduled_payments")
 }
 
 enum WalletStatus {

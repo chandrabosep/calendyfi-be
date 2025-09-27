@@ -180,3 +180,44 @@ export interface AppConfig {
 	chains: ChainConfig[];
 	defaultChainId: number;
 }
+
+// Flow Scheduling Types
+export interface FlowScheduledPayment {
+	id: string;
+	recipient: string;
+	amount: string;
+	delaySeconds: number;
+	scheduledTime: Date;
+	executed: boolean;
+	sender?: string;
+	cadenceTxId?: string;
+	evmTxId?: string;
+	createdAt: Date;
+	updatedAt?: Date;
+}
+
+export interface FlowScheduleRequest {
+	recipient: string;
+	amount: string;
+	delaySeconds: number;
+	userId: string;
+	eventId?: string;
+	description?: string;
+}
+
+export interface FlowScheduleResponse {
+	success: boolean;
+	scheduleId?: string;
+	evmTxHash?: string;
+	cadenceTxId?: string;
+	scheduledTime?: Date;
+	error?: string;
+}
+
+export interface FlowExecutionResult {
+	success: boolean;
+	txId?: string;
+	transactionHash?: string;
+	error?: string;
+	executedAt?: Date;
+}

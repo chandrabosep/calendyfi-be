@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import { createCalendarApiService } from "../services/calendar-api";
+import { createFlowSchedulerService } from "../services/flow-scheduler";
 import { prisma } from "../db/client";
 import { decrypt } from "../utils/encryption";
 import { ApiResponse } from "../types";
@@ -420,7 +421,9 @@ async function handleCalendarSync(resourceId: string): Promise<void> {
 	});
 
 	if (!webhookChannel) {
-		console.warn("No webhook channel found for resource ID", { resourceId });
+		console.warn("No webhook channel found for resource ID", {
+			resourceId,
+		});
 		return;
 	}
 
@@ -451,7 +454,9 @@ async function handleCalendarUpdate(resourceId: string): Promise<void> {
 	});
 
 	if (!webhookChannel) {
-		console.warn("No webhook channel found for resource ID", { resourceId });
+		console.warn("No webhook channel found for resource ID", {
+			resourceId,
+		});
 		return;
 	}
 
@@ -472,5 +477,214 @@ async function handleCalendarUpdate(resourceId: string): Promise<void> {
 		eventCount: events.length,
 	});
 }
+
+// Process AI event and optionally schedule on Flow
+router.post("/process-ai-event", async (req: Request, res: Response) => {
+	try {
+		const { eventId, scheduleOnFlow } = req.body;
+
+		if (!eventId) {
+			return res.status(400).json({
+				success: false,
+				error: "Event ID is required",
+			} as ApiResponse);
+		}
+
+		// Get the event
+		const event = await prisma.calendarEvent.findUnique({
+			where: { id: eventId },
+			include: { user: true },
+		});
+
+		if (!event) {
+			return res.status(404).json({
+				success: false,
+				error: "Event not found",
+			} as ApiResponse);
+		}
+
+		if (!event.isAiEvent) {
+			return res.status(400).json({
+				success: false,
+				error: "Event is not an AI event",
+			} as ApiResponse);
+		}
+
+		console.info("Processing AI event for Flow scheduling", {
+			eventId,
+			scheduleOnFlow,
+			userId: event.userId,
+		});
+
+		let flowScheduleResult = null;
+
+		// If Flow scheduling is requested and event has payment action
+		if (
+			scheduleOnFlow &&
+			event.parsedAction &&
+			(event.parsedAction === "send" ||
+				event.parsedAction === "pay" ||
+				event.parsedAction === "transfer")
+		) {
+			try {
+				// Extract payment details
+				let parsedAmount: any;
+				let parsedRecipient: any;
+
+				try {
+					parsedAmount =
+						typeof event.parsedAmount === "string"
+							? JSON.parse(event.parsedAmount)
+							: event.parsedAmount;
+					parsedRecipient =
+						typeof event.parsedRecipient === "string"
+							? JSON.parse(event.parsedRecipient)
+							: event.parsedRecipient;
+				} catch (parseError) {
+					console.warn(
+						"Failed to parse event data for Flow scheduling",
+						{ parseError }
+					);
+					return res.status(400).json({
+						success: false,
+						error: "Invalid parsed event data for Flow scheduling",
+					} as ApiResponse);
+				}
+
+				const amount = parsedAmount?.value || parsedAmount;
+				const recipient = parsedRecipient?.address || parsedRecipient;
+
+				if (amount && recipient) {
+					// Calculate delay from event scheduled time
+					const scheduledTime =
+						event.parsedScheduledTime || event.startTime;
+					const delaySeconds = Math.max(
+						0,
+						Math.floor(
+							(scheduledTime.getTime() - Date.now()) / 1000
+						)
+					);
+
+					const flowSchedulerService = createFlowSchedulerService();
+
+					// Schedule on Flow (using EVM method by default)
+					flowScheduleResult =
+						await flowSchedulerService.schedulePaymentViaEVM({
+							recipient,
+							amount: amount.toString(),
+							delaySeconds,
+							userId: event.userId,
+						});
+
+					if (flowScheduleResult.success) {
+						// Update the calendar event with Flow scheduling info
+						await prisma.calendarEvent.update({
+							where: { id: eventId },
+							data: {
+								flowScheduleId: flowScheduleResult.scheduleId,
+								flowEvmTxHash: flowScheduleResult.evmTxHash,
+								flowCadenceTxId: flowScheduleResult.cadenceTxId,
+							},
+						});
+
+						// Store in Flow scheduled payments table
+						try {
+							await prisma.flowScheduledPayment.create({
+								data: {
+									scheduleId:
+										flowScheduleResult.scheduleId ||
+										`event-${eventId}`,
+									userId: event.userId,
+									recipient,
+									amount: amount.toString(),
+									delaySeconds,
+									scheduledTime,
+									method: "evm",
+									evmTxHash: flowScheduleResult.evmTxHash,
+									cadenceTxId: flowScheduleResult.cadenceTxId,
+									eventId: event.id,
+									description: `Flow payment from AI event: ${event.title}`,
+									executed: false,
+								},
+							});
+						} catch (dbError) {
+							console.warn(
+								"Failed to store Flow scheduled payment",
+								{ dbError }
+							);
+						}
+
+						console.info(
+							"AI event scheduled on Flow successfully",
+							{
+								eventId,
+								scheduleId: flowScheduleResult.scheduleId,
+								recipient,
+								amount,
+								delaySeconds,
+							}
+						);
+					} else {
+						console.warn("Failed to schedule AI event on Flow", {
+							eventId,
+							error: flowScheduleResult.error,
+						});
+					}
+				} else {
+					console.warn(
+						"AI event missing required payment details for Flow scheduling",
+						{
+							eventId,
+							amount,
+							recipient,
+						}
+					);
+				}
+			} catch (flowError) {
+				console.error("Error scheduling AI event on Flow", {
+					flowError,
+					eventId,
+				});
+				flowScheduleResult = {
+					success: false,
+					error:
+						flowError instanceof Error
+							? flowError.message
+							: "Unknown Flow scheduling error",
+				};
+			}
+		}
+
+		return res.json({
+			success: true,
+			data: {
+				eventId,
+				eventTitle: event.title,
+				isAiEvent: event.isAiEvent,
+				parsedAction: event.parsedAction,
+				parsedIntent: event.parsedIntent,
+				flowScheduling: flowScheduleResult
+					? {
+							success: flowScheduleResult.success,
+							scheduleId: flowScheduleResult.scheduleId,
+							evmTxHash: flowScheduleResult.evmTxHash,
+							cadenceTxId: flowScheduleResult.cadenceTxId,
+							error: flowScheduleResult.error,
+					  }
+					: null,
+				message: flowScheduleResult?.success
+					? "AI event processed and scheduled on Flow"
+					: "AI event processed",
+			},
+		} as ApiResponse);
+	} catch (error) {
+		console.error("Failed to process AI event", { error });
+		return res.status(500).json({
+			success: false,
+			error: "Failed to process AI event",
+			details: error instanceof Error ? error.message : "Unknown error",
+		} as ApiResponse);
+	}
+});
 
 export default router;

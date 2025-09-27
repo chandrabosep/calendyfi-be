@@ -6,6 +6,7 @@ import { config } from "./config";
 import authRoutes from "./api/auth";
 import calendarRoutes from "./api/calendar";
 import walletRoutes from "./api/wallet";
+import flowSchedulerRoutes from "./api/flow-scheduler";
 import { ApiResponse } from "./types";
 import { startScheduler, stopScheduler } from "../src/services/scheduler";
 import { checkDatabaseConnection, disconnectDatabase } from "./db/client";
@@ -82,6 +83,7 @@ app.get("/health", async (req, res) => {
 app.use("/api/auth", authRoutes);
 app.use("/api/calendar", calendarRoutes);
 app.use("/api/wallet", walletRoutes);
+app.use("/api/flow-scheduler", flowSchedulerRoutes);
 
 // 404 handler
 app.use((req, res) => {

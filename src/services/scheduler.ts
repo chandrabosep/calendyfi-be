@@ -1,12 +1,15 @@
 import { createTransactionExecutor } from "./transaction-executor";
+import { createFlowSchedulerService } from "./flow-scheduler";
 
 export class Scheduler {
 	private transactionExecutor: ReturnType<typeof createTransactionExecutor>;
+	private flowSchedulerService: ReturnType<typeof createFlowSchedulerService>;
 	private intervalId: NodeJS.Timeout | null = null;
 	private isRunning = false;
 
 	constructor() {
 		this.transactionExecutor = createTransactionExecutor();
+		this.flowSchedulerService = createFlowSchedulerService();
 	}
 
 	/**
@@ -65,18 +68,61 @@ export class Scheduler {
 		try {
 			console.info("Processing scheduled transactions");
 
-			const result =
+			// Process regular EVM transactions
+			const evmResult =
 				await this.transactionExecutor.processScheduledTransactions();
 
-			if (result.processed > 0) {
-				console.info("Scheduled transactions processed", {
-					processed: result.processed,
-					successful: result.successful,
-					failed: result.failed,
+			if (evmResult.processed > 0) {
+				console.info("EVM scheduled transactions processed", {
+					processed: evmResult.processed,
+					successful: evmResult.successful,
+					failed: evmResult.failed,
+				});
+			}
+
+			// Process Flow scheduled payments
+			const flowResult =
+				await this.flowSchedulerService.processReadyPayments();
+
+			if (flowResult.processed > 0) {
+				console.info("Flow scheduled payments processed", {
+					processed: flowResult.processed,
+					successful: flowResult.successful,
+					failed: flowResult.failed,
+					errors:
+						flowResult.errors.length > 0
+							? flowResult.errors
+							: undefined,
+				});
+			}
+
+			// Log combined results
+			const totalProcessed = evmResult.processed + flowResult.processed;
+			const totalSuccessful =
+				evmResult.successful + flowResult.successful;
+			const totalFailed = evmResult.failed + flowResult.failed;
+
+			if (totalProcessed > 0) {
+				console.info("All scheduled transactions processed", {
+					totalProcessed,
+					totalSuccessful,
+					totalFailed,
+					evm: {
+						processed: evmResult.processed,
+						successful: evmResult.successful,
+						failed: evmResult.failed,
+					},
+					flow: {
+						processed: flowResult.processed,
+						successful: flowResult.successful,
+						failed: flowResult.failed,
+					},
 				});
 			}
 		} catch (error) {
-			console.error("Failed to process scheduled transactions", { error });
+			console.error("Failed to process scheduled transactions", {
+				error,
+			});
 		}
 	}
 

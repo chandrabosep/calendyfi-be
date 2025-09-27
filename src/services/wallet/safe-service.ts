@@ -68,8 +68,11 @@ export class SafeService {
 		threshold: number = 1
 	): Promise<string> {
 		try {
+			const chainConfig = this.getChainConfig(chainId);
 			console.info("Deploying Safe with owners", {
 				chainId,
+				chainName: chainConfig.name,
+				rpcUrl: chainConfig.rpcUrl,
 				owners,
 				threshold,
 			});
@@ -124,6 +127,16 @@ export class SafeService {
 			const deploymentTransaction =
 				await safeSdk.createSafeDeploymentTransaction();
 
+			console.info("Safe deployment transaction created", {
+				chainId,
+				deploymentTx: {
+					to: deploymentTransaction.to,
+					data: deploymentTransaction.data?.slice(0, 50) + "...",
+					value: deploymentTransaction.value,
+				},
+				deployerAddress: deployerSigner.address,
+			});
+
 			// Execute the deployment transaction
 			const txResponse = await deployerSigner.sendTransaction({
 				to: deploymentTransaction.to,
@@ -133,14 +146,63 @@ export class SafeService {
 					: 0n,
 			});
 
+			console.info("Safe deployment transaction sent", {
+				chainId,
+				txHash: txResponse.hash,
+				predictedSafeAddress: safeAddress,
+			});
+
 			const receipt = await txResponse.wait();
+
+			console.info("Safe deployment transaction confirmed", {
+				chainId,
+				txHash: txResponse.hash,
+				blockNumber: receipt?.blockNumber,
+				gasUsed: receipt?.gasUsed?.toString(),
+				status: receipt?.status,
+			});
+
+			// Wait a moment for the contract to be indexed by the network
+			await new Promise((resolve) => setTimeout(resolve, 2000));
 
 			// Verify the contract was actually deployed
 			const code = await provider.getCode(safeAddress);
 
+			console.info("Safe deployment verification", {
+				chainId,
+				predictedAddress: safeAddress,
+				codeLength: code.length,
+				hasContract: code !== "0x",
+				txHash: txResponse.hash,
+			});
+
 			if (code === "0x") {
+				// Try checking the transaction receipt for contract creation
+				const contractAddress = receipt?.contractAddress;
+				if (contractAddress) {
+					console.warn(
+						"Safe deployed at different address than predicted",
+						{
+							chainId,
+							predictedAddress: safeAddress,
+							actualAddress: contractAddress,
+							txHash: txResponse.hash,
+						}
+					);
+
+					// Verify the actual deployed contract
+					const actualCode = await provider.getCode(contractAddress);
+					if (actualCode !== "0x") {
+						console.info("Using actual deployed Safe address", {
+							chainId,
+							address: contractAddress,
+						});
+						return contractAddress;
+					}
+				}
+
 				throw new Error(
-					`Safe contract was not deployed at predicted address ${safeAddress}`
+					`Safe contract was not deployed at predicted address ${safeAddress}. Transaction hash: ${txResponse.hash}, Block: ${receipt?.blockNumber}`
 				);
 			}
 

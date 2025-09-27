@@ -1,10 +1,12 @@
 import express from "express";
 import { CalendarApiService, CalendarEvent } from "../services/calendar-api";
+import { AIEventProcessor } from "../services/ai-event-processor";
 import { TokenService } from "../utils/token-service";
 import prisma from "../db/client";
 
 const router = express.Router();
 const calendarService = new CalendarApiService();
+const aiProcessor = new AIEventProcessor();
 
 /**
  * Middleware to authenticate requests
@@ -280,5 +282,144 @@ router.post(
 		}
 	}
 );
+
+/**
+ * AI-powered event creation from natural language
+ */
+router.post("/ai/create-event", authenticateUser, async (req: any, res) => {
+	try {
+		const { input, autoCreate = false } = req.body;
+
+		if (!input || typeof input !== "string") {
+			return res
+				.status(400)
+				.json({ error: "Natural language input required" });
+		}
+
+		const result = await aiProcessor.processAndCreateEvent(
+			req.user.id,
+			input,
+			req.user.accessToken,
+			req.user.refreshToken,
+			autoCreate
+		);
+
+		res.json({
+			success: true,
+			...result,
+		});
+	} catch (error) {
+		console.error("AI event creation failed:", error);
+		res.status(500).json({
+			error: "Failed to process natural language event",
+			details: error instanceof Error ? error.message : "Unknown error",
+		});
+	}
+});
+
+/**
+ * Get AI suggestions for events
+ */
+router.get("/ai/suggestions", authenticateUser, async (req: any, res) => {
+	try {
+		const { context } = req.query;
+
+		const suggestions = await aiProcessor.generateSmartSuggestions(
+			req.user.id,
+			context as string
+		);
+
+		res.json({ suggestions });
+	} catch (error) {
+		console.error("Failed to generate suggestions:", error);
+		res.status(500).json({
+			error: "Failed to generate suggestions",
+			details: error instanceof Error ? error.message : "Unknown error",
+		});
+	}
+});
+
+/**
+ * Optimize event timing
+ */
+router.post("/ai/optimize-timing", authenticateUser, async (req: any, res) => {
+	try {
+		const { eventText } = req.body;
+
+		if (!eventText) {
+			return res.status(400).json({ error: "Event text required" });
+		}
+
+		const optimization = await aiProcessor.optimizeEventTiming(
+			req.user.id,
+			eventText
+		);
+
+		res.json(optimization);
+	} catch (error) {
+		console.error("Failed to optimize timing:", error);
+		res.status(500).json({
+			error: "Failed to optimize event timing",
+			details: error instanceof Error ? error.message : "Unknown error",
+		});
+	}
+});
+
+/**
+ * Batch process multiple events
+ */
+router.post("/ai/batch-process", authenticateUser, async (req: any, res) => {
+	try {
+		const { inputs } = req.body;
+
+		if (!Array.isArray(inputs) || inputs.length === 0) {
+			return res
+				.status(400)
+				.json({ error: "Array of event inputs required" });
+		}
+
+		if (inputs.length > 10) {
+			return res
+				.status(400)
+				.json({ error: "Maximum 10 events per batch" });
+		}
+
+		const results = await aiProcessor.batchProcessEvents(
+			req.user.id,
+			inputs,
+			req.user.accessToken,
+			req.user.refreshToken
+		);
+
+		res.json({
+			success: true,
+			results,
+			processed: results.length,
+			total: inputs.length,
+		});
+	} catch (error) {
+		console.error("Batch processing failed:", error);
+		res.status(500).json({
+			error: "Failed to batch process events",
+			details: error instanceof Error ? error.message : "Unknown error",
+		});
+	}
+});
+
+/**
+ * Get AI processing statistics
+ */
+router.get("/ai/stats", authenticateUser, async (req: any, res) => {
+	try {
+		const stats = await aiProcessor.getProcessingStats(req.user.id);
+		res.json(stats);
+	} catch (error) {
+		console.error("Failed to get AI stats:", error);
+		res.status(500).json({
+			error: "Failed to get processing statistics",
+			details: error instanceof Error ? error.message : "Unknown error",
+		});
+	}
+});
 
 export default router;

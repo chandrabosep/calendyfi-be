@@ -86,11 +86,11 @@ Parse the following user text and return a JSON object with the following struct
 
 {
   "intent": {
-    "type": "payment" | "transfer" | "swap" | "defi" | "stake" | "deposit" | "split" | "unknown",
+    "type": "payment" | "transfer" | "swap" | "defi" | "stake" | "deposit" | "split" | "price_trigger" | "unknown",
     "description": "Brief description of what the user wants to do"
   },
   "action": {
-    "type": "send" | "pay" | "swap" | "stake" | "deposit" | "split" | "convert" | "unknown",
+    "type": "send" | "pay" | "swap" | "stake" | "deposit" | "split" | "convert" | "price_trigger" | "unknown",
     "description": "Specific action to be performed"
   },
   "parameters": {
@@ -112,7 +112,14 @@ Parse the following user text and return a JSON object with the following struct
     "participants": ["string array of usernames for splits"],
     "splitAmount": number,
     "pool": "string (staking pool name)",
-    "platform": "string (platform name)"
+    "platform": "string (platform name)",
+    "priceTrigger": {
+      "triggerType": "above" | "below" | "equals",
+      "targetPrice": number,
+      "fromToken": "string (token to monitor)",
+      "toToken": "string (token to swap to)",
+      "amount": "string (amount to swap)"
+    }
   },
   "confidence": number (0-1, how confident you are in the parsing),
   "scheduledTime": "string (ISO 8601 format of when this transaction should execute)"
@@ -157,7 +164,35 @@ Examples of commands to parse:
    - Intent: transfer, Action: send
    - Amount: 0.001 FLOW, Chain: Flow, Recipient: bob.eth
 
-SUPPORTED TOKENS:
+9. "@ai if ETH hits $3000 then swap 1 ETH to USDC"
+   - Intent: price_trigger, Action: price_trigger
+   - priceTrigger: { triggerType: "above", targetPrice: 3000, fromToken: "ETH", toToken: "USDC", amount: "1" }
+
+10. "@ai when RBTC goes below $50000 swap 0.1 RBTC to RIF"
+   - Intent: price_trigger, Action: price_trigger
+   - priceTrigger: { triggerType: "below", targetPrice: 50000, fromToken: "RBTC", toToken: "RIF", amount: "0.1" }
+
+11. "@ai if AAPL hits $200 then swap 10 AAPL to USDC"
+   - Intent: price_trigger, Action: price_trigger
+   - priceTrigger: { triggerType: "above", targetPrice: 200, fromToken: "AAPL", toToken: "USDC", amount: "10" }
+
+12. "@ai when TSLA goes below $150 swap 5 TSLA to SPY"
+   - Intent: price_trigger, Action: price_trigger
+   - priceTrigger: { triggerType: "below", targetPrice: 150, fromToken: "TSLA", toToken: "SPY", amount: "5" }
+
+SUPPORTED ASSETS:
+
+STOCKS (via Polygon.io):
+- AAPL (Apple), GOOGL (Alphabet), MSFT (Microsoft), TSLA (Tesla)
+- AMZN (Amazon), NVDA (NVIDIA), META (Meta), NFLX (Netflix)
+- SPY (S&P 500 ETF), QQQ (Nasdaq ETF)
+
+CRYPTO (via Polygon.io + CoinGecko):
+- BTC (Bitcoin), ETH (Ethereum), ADA (Cardano), SOL (Solana)
+- MATIC (Polygon), AVAX (Avalanche), DOT (Polkadot), LINK (Chainlink)
+- UNI (Uniswap), LTC (Litecoin)
+
+BLOCKCHAIN TOKENS:
 - Sepolia: ETH (native), USDC, USDT, DAI
 - Rootstock: RBTC (native), RIF
 - Flow EVM: FLOW (native)

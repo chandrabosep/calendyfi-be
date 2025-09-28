@@ -140,6 +140,46 @@ model FlowScheduledPayment {
   @@map("flow_scheduled_payments")
 }
 
+model PriceTrigger {
+  id                String    @id @default(cuid())
+  userId            String
+  triggerType       String // "above", "below", "equals"
+  targetPrice       Float
+  currentPrice      Float?
+  fromToken         String
+  toToken           String
+  amount            String
+  chainId           Int
+  isActive          Boolean   @default(true)
+  slippageTolerance Float?    @default(2.0)
+  gasLimit          String?
+  description       String?
+  calendarEventId   String?
+  status            String    @default("pending") // "pending", "triggered", "executed", "failed", "cancelled"
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  triggeredAt       DateTime?
+  executedAt        DateTime?
+
+  @@map("price_triggers")
+}
+
+model PriceAlert {
+  id                 String   @id @default(cuid())
+  userId             String
+  token              String
+  chainId            Int
+  triggerType        String // "above", "below"
+  targetPrice        Float
+  isActive           Boolean  @default(true)
+  notificationMethod String   @default("email") // "email", "calendar", "both"
+  message            String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@map("price_alerts")
+}
+
 enum WalletStatus {
   ACTIVE
   REVOKED

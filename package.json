@@ -8,6 +8,10 @@
 		"dev": "tsx watch src/server.ts",
 		"detect": "tsx src/scripts/ai-only-detector.ts",
 		"test:flow": "tsx src/scripts/test-flow-scheduler.ts",
+		"test:price-triggers": "tsx src/scripts/test-price-triggers.ts",
+		"test:polygon-api": "tsx src/scripts/test-polygon-api.ts",
+		"test:polygon-free": "tsx src/scripts/test-polygon-free-tier.ts",
+		"test:realtime": "tsx src/scripts/test-realtime-data.ts",
 		"db:generate": "prisma generate",
 		"db:push": "prisma db push",
 		"db:migrate": "prisma migrate dev"

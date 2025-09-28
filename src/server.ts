@@ -10,6 +10,7 @@ import evmBridgeRoutes from "./api/evm-bridge";
 import flowSchedulerRoutes from "./api/flow-scheduler";
 import multiChainSchedulerRoutes from "./api/multi-chain-scheduler";
 import autoSchedulerRoutes from "./api/auto-scheduler";
+import priceTriggersRoutes from "./api/price-triggers";
 import { ApiResponse } from "./types";
 import { startScheduler, stopScheduler } from "../src/services/scheduler";
 import { checkDatabaseConnection, disconnectDatabase } from "./db/client";
@@ -91,6 +92,7 @@ app.use("/api/evm-bridge", evmBridgeRoutes); // Primary scheduler - EVM Bridge
 app.use("/api/flow-scheduler", flowSchedulerRoutes); // Legacy Flow scheduler
 app.use("/api/multi-chain-scheduler", multiChainSchedulerRoutes);
 app.use("/api/auto-scheduler", autoSchedulerRoutes);
+app.use("/api/price-triggers", priceTriggersRoutes); // Price-triggered conditional swaps
 
 // 404 handler
 app.use((req, res) => {

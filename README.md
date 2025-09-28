@@ -2,27 +2,37 @@
 
 **Transform your Google Calendar into an automated DeFi command center. Every event becomes an on-chain action — from paying friends to yield farming — powered by AI, multi-chain wallets, and seamless execution.**
 
+**Built with:** Flow EVM • Rootstock (RSK) • Google Calendar API • Gemini AI • Privy • Safe Protocol Kit
+
 ## 🚀 Overview
 
 CalendeFi fuses **Calendar + AI + DeFi** to make time programmable. Link your Google Calendar, and each event is parsed with AI into actionable financial tasks executed automatically across Flow and Rootstock networks.
 
 From bill-splitting after lunch to automated payments between meetings, your schedule literally becomes your strategy. Real-time dashboards provide transparency, while one-click onboarding gives instant access to smart wallets and agent wallets with secure signers — no coding needed.
 
-## 📋 Contract Addresses (Testnet)
+## 📋 Contract Addresses & Network Index
 
-### Flow EVM Testnet
+### 🌊 Flow Blockchain
 
--   **EVM Scheduler Contract**: [`0x7FA7E751C514ab4CB7D0Fb64a2605B644044D917`](https://evm-testnet.flowscan.io/address/0x7FA7E751C514ab4CB7D0Fb64a2605B644044D917?tab=txs)
--   **Cadence Bridge Contract**: [`0x9f3e9372a21a4f15`](https://testnet.flowscan.io/contract/A.9f3e9372a21a4f15.NativeEVMBridge)
--   **Flow EVM RPC**: `https://testnet.evm.nodes.onflow.org`
--   **Chain ID**: `545`
+-   **Flow EVM Testnet**: Chain ID `545` (Custom Smart Accounts)
+    -   **EVM Scheduler Contract**: [`0x7FA7E751C514ab4CB7D0Fb64a2605B644044D917`](https://evm-testnet.flowscan.io/address/0x7FA7E751C514ab4CB7D0Fb64a2605B644044D917?tab=txs)
+    -   **Flow EVM RPC**: `https://testnet.evm.nodes.onflow.org`
+-   **Flow Cadence Testnet**: Chain ID `646` (Flow Actions)
+    -   **Cadence Bridge Contract**: [`0x9f3e9372a21a4f15`](https://testnet.flowscan.io/contract/A.9f3e9372a21a4f15.NativeEVMBridge)
+    -   **Flow Scheduled Transactions**: [`flow-schedule-transaction`](https://github.com/chandrabosep/flow-schedule-transaction) - Native Flow scheduling with Cadence
 
-### Supported Networks
+### ⛓️ Rootstock (RSK)
+
+-   **Rootstock Testnet**: Chain ID `31` (Safe Protocol Kit)
+    -   **Bitcoin-secured smart contracts** with RBTC native token
+    -   **RNS Domain Support**: `.rsk` domains (alice.rsk, bob.rsk)
+    -   **RIF Token Support**: RIF ecosystem integration
+
+### 🔗 Ethereum Ecosystem
 
 -   **Sepolia Testnet**: Chain ID `11155111` (Safe Protocol Kit)
--   **Flow EVM Testnet**: Chain ID `545` (Custom Smart Accounts)
--   **Flow Cadence Testnet**: Chain ID `646` (Flow Actions)
--   **Rootstock Testnet**: Chain ID `31` (Safe Protocol Kit)
+    -   **ENS Domain Support**: `.eth` domains (vitalik.eth, alice.eth)
+    -   **Standard EVM compatibility** with Safe Protocol Kit
 
 ## 🏗️ Architecture
 
@@ -155,6 +165,29 @@ transaction(recipient: String, amount: UInt256, delaySeconds: UInt64, evmTxHash:
 }`;
 ```
 
+**Flow Scheduled Transactions** ([`flow-schedule-transaction`](https://github.com/chandrabosep/flow-schedule-transaction))
+
+```cadence
+// Native Flow scheduling with Cadence contracts
+import "FlowTransactionScheduler"
+import "FlowTransactionSchedulerUtils"
+
+transaction(timestamp: UFix64, priority: UInt8, executionEffort: UInt64) {
+    prepare(signer: auth(BorrowValue, IssueStorageCapabilityController, SaveValue) &Account) {
+        // Initialize manager and schedule transactions
+        let manager = FlowTransactionSchedulerUtils.createManager()
+        let transactionId = manager.schedule(
+            handlerCap: handlerCap,
+            data: transactionData,
+            timestamp: timestamp,
+            priority: priority,
+            executionEffort: executionEffort,
+            fees: <-fees
+        )
+    }
+}
+```
+
 ### 💱 DeFi Protocol Integration
 
 **Price Trigger System** ([`src/services/price-monitor.ts`](src/services/price-monitor.ts))
@@ -170,10 +203,28 @@ async createPriceTrigger(trigger: Omit<PriceTrigger, "id" | "createdAt" | "statu
 }
 ```
 
-**Token Resolution** ([`src/services/token-service.ts`](src/services/token-service.ts))
+**Token Resolution** ([`src/services/name-resolution-service.ts`](src/services/name-resolution-service.ts))
 
--   Supports ENS (.eth), RNS (.rsk), and direct wallet addresses
--   Automatic name service resolution
+```typescript
+// Supports ENS (.eth), RNS (.rsk), and direct wallet addresses with automatic resolution
+async resolveName(name: string, chainId: number): Promise<NameResolutionResult> {
+    // RNS resolution for Rootstock (.rsk domains)
+    if (this.isRNSName(cleanName)) {
+        const rnsResult = await this.resolveRNS(cleanName, 30);
+    }
+
+    // ENS resolution for Ethereum/Sepolia (.eth domains)
+    if (this.isENSName(cleanName)) {
+        const ensResult = await this.resolveENS(cleanName, chainId);
+    }
+}
+```
+
+**Supported Name Services:**
+
+-   **ENS**: `vitalik.eth`, `alice.eth` (Ethereum/Sepolia)
+-   **RNS**: `alice.rsk`, `bob.rsk` (Rootstock)
+-   **Direct Addresses**: `0x1234...` (All chains)
 
 **Transfer & Payment Engine** ([`src/services/transaction-executor.ts`](src/services/transaction-executor.ts))
 
@@ -206,12 +257,20 @@ router.post("/webhook", async (req: Request, res: Response) => {
 
 ```typescript
 // Events like "Split dinner $200 with @alice @bob tomorrow 7pm" automatically parsed and scheduled
+// Supports ENS (.eth) and RNS (.rsk) domain resolution in natural language
 private buildParsingPrompt(userText: string, scheduledTime?: Date): string {
     return `Parse this calendar event for DeFi actions: "${userText}"
     Extract: intent, action, amount, recipient, token, chain, scheduled time
-    Support patterns: transfers, swaps, staking, price alerts, recurring payments`;
+    Support patterns: transfers, swaps, staking, price alerts, recurring payments
+    Examples: "Pay 1 USDC to vitalik.eth", "Send 0.01 RBTC to alice.rsk on Rootstock"`;
 }
 ```
+
+**Supported Name Services in AI Parsing:**
+
+-   **ENS**: `vitalik.eth`, `alice.eth` (Ethereum/Sepolia)
+-   **RNS**: `alice.rsk`, `bob.rsk` (Rootstock)
+-   **Usernames**: `@alice`, `@bob` (for splits and payments)
 
 ## 🔧 API Endpoints
 
@@ -403,6 +462,7 @@ npm run test:evm-scheduler
 -   **Core execution layer** with Flow EVM testnet integration
 -   **Native FLOW token support** and Flow-specific smart contract deployment
 -   **Calendar-triggered transactions** with EVM-to-Cadence bridge communication
+-   **Flow Scheduled Transactions**: Native Flow scheduling with Cadence contracts ([`flow-schedule-transaction`](https://github.com/chandrabosep/flow-schedule-transaction))
 
 ### Rootstock (RSK)
 
@@ -457,6 +517,7 @@ src/
 ✅ **Flow EVM Bridge** - Cross-VM communication between EVM and Cadence  
 ✅ **Automated Transaction Execution** - Agent wallets with EIP-712 signing  
 ✅ **Google Calendar Integration** - Webhook-based real-time synchronization  
+✅ **ENS/RNS Domain Resolution** - Support for .eth and .rsk domains in natural language  
 ✅ **Multi-Signature Security** - 1-of-2 threshold with user + agent co-signing  
 ✅ **Rate Limiting & Security** - Production-ready API protection  
 ✅ **Database Integration** - Prisma ORM with PostgreSQL  

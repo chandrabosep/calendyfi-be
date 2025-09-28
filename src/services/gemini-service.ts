@@ -75,7 +75,7 @@ export class GeminiService {
 	 */
 	private buildParsingPrompt(userText: string, scheduledTime?: Date): string {
 		const scheduledTimeInfo = scheduledTime
-			? `\nIMPORTANT: This command is scheduled to execute at: ${scheduledTime.toISOString()} (${scheduledTime.toLocaleString()})`
+			? `\nIMPORTANT: This command is scheduled to execute at: ${scheduledTime.toISOString()} (${scheduledTime.toLocaleString()}). You MUST use this exact time in your response.`
 			: "\nIMPORTANT: This command has no scheduled time - it should execute immediately.";
 
 		return `
@@ -180,7 +180,7 @@ IMPORTANT: For recipient parsing:
 IMPORTANT: For swap commands, always extract the fromToken from the amount currency. 
 If the command says "swap 100 USDC to ETH", then fromToken should be "USDC".
 
-IMPORTANT: Always include the scheduledTime field in your response. If a scheduled time is provided above, use that exact time. If no scheduled time is provided, set it to null.
+IMPORTANT: Always include the scheduledTime field in your response. If a scheduled time is provided above, you MUST use that exact time (copy it exactly). If no scheduled time is provided, set it to null.
 
 IMPORTANT: Always use testnet chains for development. If no blockchain chain is mentioned in the command, default to "Sepolia" for the chain field. For Rootstock, always use "Rootstock" (which maps to testnet).
 

@@ -609,7 +609,10 @@ export class TransactionExecutor {
 			const scheduledEvents = await withRetry(async () => {
 				return await prisma.calendarEvent.findMany({
 					where: {
-						parsedScheduledTime: { lte: now },
+						parsedScheduledTime: {
+							not: null,
+							lte: now,
+						},
 						isExecuted: false,
 						isAiEvent: true,
 						AND: [
@@ -627,6 +630,26 @@ export class TransactionExecutor {
 				count: scheduledEvents.length,
 			});
 
+			// Debug: Log the scheduled times to understand what's happening
+			if (scheduledEvents.length > 0) {
+				console.info("Debug: Scheduled events details", {
+					now: now.toISOString(),
+					events: scheduledEvents.map((event) => ({
+						id: event.id,
+						title: event.title,
+						startTime: event.startTime.toISOString(),
+						parsedScheduledTime:
+							event.parsedScheduledTime?.toISOString(),
+						isExecuted: event.isExecuted,
+						timeDiff: event.parsedScheduledTime
+							? (event.parsedScheduledTime.getTime() -
+									now.getTime()) /
+							  1000
+							: "null",
+					})),
+				});
+			}
+
 			let successful = 0;
 			let failed = 0;
 
@@ -639,10 +662,13 @@ export class TransactionExecutor {
 						successful++;
 					} else {
 						failed++;
-						console.warn("Failed to execute scheduled transaction", {
-							eventId: event.id,
-							error: result.error,
-						});
+						console.warn(
+							"Failed to execute scheduled transaction",
+							{
+								eventId: event.id,
+								error: result.error,
+							}
+						);
 					}
 				} catch (error) {
 					failed++;
@@ -665,7 +691,9 @@ export class TransactionExecutor {
 				failed,
 			};
 		} catch (error) {
-			console.error("Failed to process scheduled transactions", { error });
+			console.error("Failed to process scheduled transactions", {
+				error,
+			});
 			return { processed: 0, successful: 0, failed: 0 };
 		}
 	}
@@ -782,10 +810,13 @@ export class TransactionExecutor {
 
 			return defaultGasPrice;
 		} catch (error) {
-			console.warn("Failed to get gas price, using conservative default", {
-				error: error instanceof Error ? error.message : error,
-				chainId,
-			});
+			console.warn(
+				"Failed to get gas price, using conservative default",
+				{
+					error: error instanceof Error ? error.message : error,
+					chainId,
+				}
+			);
 
 			// Conservative fallback
 			return BigInt("1000000000"); // 1 gwei
@@ -955,10 +986,13 @@ export class TransactionExecutor {
 				transactionHash,
 			};
 		} catch (error) {
-			console.error("Failed to execute custom smart account transaction", {
-				error,
-				chainId: walletChain.chainId,
-			});
+			console.error(
+				"Failed to execute custom smart account transaction",
+				{
+					error,
+					chainId: walletChain.chainId,
+				}
+			);
 			return {
 				success: false,
 				error: error instanceof Error ? error.message : "Unknown error",

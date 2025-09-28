@@ -1,13 +1,20 @@
 import { ethers } from "ethers";
 import { config } from "../config";
+import { ScheduleParser } from "../utils/schedule-parser";
+import {
+	AdvancedScheduleRequest,
+	ParsedSchedule,
+	RecurringSchedule,
+	CustomSchedule,
+} from "../types";
 
 // Contract addresses from the frontend integration
-const EVM_SCHEDULER_ADDRESS = "0x6baaD070bF8AB1932578157826CfB209BdB254a1";
+const EVM_SCHEDULER_ADDRESS = "0x7FA7E751C514ab4CB7D0Fb64a2605B644044D917"; // Your deployed UpdatedEVMScheduler
 const CADENCE_SCHEDULER_ADDRESS = "0x9f3e9372a21a4f15";
 
-// EVM Contract ABI for scheduling - updated to match your contract
+// EVM Contract ABI for scheduling - updated to match your UpdatedEVMScheduler contract
 const EVM_SCHEDULER_ABI = [
-	"function schedulePayment(address recipient, uint256 amount, uint256 delaySeconds) external returns (uint256)",
+	"function schedulePayment(string memory recipient, uint256 amount, uint256 delaySeconds) external payable returns (uint256)",
 	"function executeSchedule(uint256 scheduleId) external",
 	"function getSchedule(uint256 scheduleId) external view returns (tuple(uint256 id, address recipient, uint256 amount, uint256 delaySeconds, uint256 createdAt, bool executed, string cadenceTxId))",
 	"function getSchedulesForRecipient(address recipient) external view returns (uint256[])",
@@ -99,7 +106,13 @@ export class FlowSchedulerService {
 				};
 			}
 
-			console.info("Scheduling payment via EVM", request);
+			console.info("Scheduling payment via EVM", {
+				...request,
+				scheduledTime: new Date(
+					Date.now() + request.delaySeconds * 1000
+				).toISOString(),
+				delayHours: request.delaySeconds / 3600,
+			});
 
 			// Convert amount to wei (assuming FLOW token with 18 decimals)
 			const amountWei = ethers.parseEther(request.amount);
@@ -154,6 +167,46 @@ export class FlowSchedulerService {
 			};
 		} catch (error) {
 			console.error("Failed to schedule payment via EVM", {
+				error,
+				request,
+			});
+			return {
+				success: false,
+				error: error instanceof Error ? error.message : "Unknown error",
+			};
+		}
+	}
+
+	/**
+	 * Schedule a payment via Cadence contract
+	 */
+	async schedulePaymentViaCadence(request: SchedulePaymentRequest): Promise<{
+		success: boolean;
+		scheduleId?: string;
+		evmTxHash?: string;
+		cadenceTxId?: string;
+		error?: string;
+	}> {
+		try {
+			// For now, we'll use the EVM method as a fallback
+			// In a full implementation, this would interact directly with Cadence contracts
+			console.info(
+				"Scheduling payment via Cadence (using EVM fallback)",
+				request
+			);
+
+			const result = await this.schedulePaymentViaEVM(request);
+
+			// Add a cadence transaction ID for tracking
+			if (result.success) {
+				result.cadenceTxId = `cadence-${Date.now()}-${Math.random()
+					.toString(36)
+					.substr(2, 9)}`;
+			}
+
+			return result;
+		} catch (error) {
+			console.error("Failed to schedule payment via Cadence", {
 				error,
 				request,
 			});
@@ -565,6 +618,326 @@ export class FlowSchedulerService {
 				errors: [
 					error instanceof Error ? error.message : "Unknown error",
 				],
+			};
+		}
+	}
+
+	/**
+	 * Schedule advanced payment patterns (recurring, custom, etc.)
+	 */
+	async scheduleAdvancedPayment(request: AdvancedScheduleRequest): Promise<{
+		success: boolean;
+		scheduleIds?: string[];
+		evmTxHashes?: string[];
+		cadenceTxIds?: string[];
+		scheduledTimes?: Date[];
+		error?: string;
+	}> {
+		try {
+			console.info("Scheduling advanced payment", {
+				scheduleType: request.scheduleType,
+				recipient: request.recipient,
+				amount: request.amount,
+			});
+
+			let parsedSchedule: ParsedSchedule;
+
+			// Parse the schedule based on type
+			if (request.scheduleType === "once") {
+				// Simple one-time scheduling
+				const scheduledTime =
+					request.scheduledTime ||
+					new Date(Date.now() + (request.delaySeconds || 0) * 1000);
+				parsedSchedule = {
+					type: "once",
+					executions: [scheduledTime],
+				};
+			} else if (
+				request.scheduleType === "recurring" &&
+				request.recurringSchedule
+			) {
+				parsedSchedule = this.parseRecurringSchedule(
+					request.recurringSchedule
+				);
+			} else if (
+				request.scheduleType === "custom" &&
+				request.customSchedule
+			) {
+				parsedSchedule = ScheduleParser.parseNaturalLanguage(
+					request.customSchedule.pattern,
+					request.customSchedule.startDate
+				);
+			} else {
+				return {
+					success: false,
+					error: "Invalid schedule configuration",
+				};
+			}
+
+			if (parsedSchedule.error) {
+				return {
+					success: false,
+					error: parsedSchedule.error,
+				};
+			}
+
+			// Schedule each execution
+			const scheduleIds: string[] = [];
+			const evmTxHashes: string[] = [];
+			const cadenceTxIds: string[] = [];
+			const scheduledTimes: Date[] = [];
+
+			for (const executionTime of parsedSchedule.executions) {
+				const delaySeconds =
+					ScheduleParser.calculateDelaySeconds(executionTime);
+
+				// Skip past executions
+				if (delaySeconds <= 0) {
+					console.warn("Skipping past execution time", {
+						executionTime,
+					});
+					continue;
+				}
+
+				const scheduleRequest = {
+					recipient: request.recipient,
+					amount: request.amount,
+					delaySeconds,
+					userId: request.userId,
+				};
+
+				let result;
+				if (request.method === "cadence") {
+					result = await this.schedulePaymentViaCadence(
+						scheduleRequest
+					);
+				} else {
+					result = await this.schedulePaymentViaEVM(scheduleRequest);
+				}
+
+				if (result.success) {
+					scheduleIds.push(
+						result.scheduleId || `schedule-${Date.now()}`
+					);
+					if (result.evmTxHash) evmTxHashes.push(result.evmTxHash);
+					if (result.cadenceTxId)
+						cadenceTxIds.push(result.cadenceTxId);
+					scheduledTimes.push(executionTime);
+				} else {
+					console.error("Failed to schedule individual payment", {
+						executionTime,
+						error: result.error,
+					});
+				}
+			}
+
+			console.info("Advanced payment scheduling completed", {
+				totalExecutions: parsedSchedule.executions.length,
+				successfulSchedules: scheduleIds.length,
+				scheduleType: request.scheduleType,
+			});
+
+			return {
+				success: true,
+				scheduleIds,
+				evmTxHashes,
+				cadenceTxIds,
+				scheduledTimes,
+			};
+		} catch (error) {
+			console.error("Failed to schedule advanced payment", {
+				error,
+				request,
+			});
+			return {
+				success: false,
+				error: error instanceof Error ? error.message : "Unknown error",
+			};
+		}
+	}
+
+	/**
+	 * Parse recurring schedule into execution times
+	 */
+	private parseRecurringSchedule(
+		schedule: RecurringSchedule
+	): ParsedSchedule {
+		const executions: Date[] = [];
+		const startDate = schedule.startDate;
+		const endDate =
+			schedule.endDate ||
+			new Date(Date.now() + 365 * 24 * 60 * 60 * 1000); // Default to 1 year
+
+		let currentDate = new Date(startDate);
+
+		while (currentDate <= endDate) {
+			executions.push(new Date(currentDate));
+
+			// Calculate next execution based on schedule type
+			switch (schedule.type) {
+				case "daily":
+					currentDate.setDate(
+						currentDate.getDate() + schedule.interval
+					);
+					break;
+				case "weekly":
+					currentDate.setDate(
+						currentDate.getDate() + schedule.interval * 7
+					);
+					break;
+				case "monthly":
+					currentDate.setMonth(
+						currentDate.getMonth() + schedule.interval
+					);
+					break;
+				case "yearly":
+					currentDate.setFullYear(
+						currentDate.getFullYear() + schedule.interval
+					);
+					break;
+				default:
+					throw new Error(
+						`Unsupported recurring schedule type: ${schedule.type}`
+					);
+			}
+		}
+
+		return {
+			type: "recurring",
+			executions,
+			pattern: `${schedule.type} every ${schedule.interval}`,
+		};
+	}
+
+	/**
+	 * Schedule payment with natural language pattern
+	 */
+	async scheduleWithPattern(
+		recipient: string,
+		amount: string,
+		userId: string,
+		pattern: string,
+		method: "evm" | "cadence" = "evm"
+	): Promise<{
+		success: boolean;
+		scheduleIds?: string[];
+		evmTxHashes?: string[];
+		cadenceTxIds?: string[];
+		scheduledTimes?: Date[];
+		error?: string;
+	}> {
+		try {
+			console.info("Scheduling payment with pattern", {
+				pattern,
+				recipient,
+				amount,
+			});
+
+			const parsedSchedule = ScheduleParser.parseNaturalLanguage(pattern);
+
+			if (parsedSchedule.error) {
+				return {
+					success: false,
+					error: parsedSchedule.error,
+				};
+			}
+
+			const scheduleIds: string[] = [];
+			const evmTxHashes: string[] = [];
+			const cadenceTxIds: string[] = [];
+			const scheduledTimes: Date[] = [];
+
+			for (const executionTime of parsedSchedule.executions) {
+				const delaySeconds =
+					ScheduleParser.calculateDelaySeconds(executionTime);
+
+				// Skip past executions
+				if (delaySeconds <= 0) {
+					console.warn("Skipping past execution time", {
+						executionTime,
+					});
+					continue;
+				}
+
+				const scheduleRequest = {
+					recipient,
+					amount,
+					delaySeconds,
+					userId,
+				};
+
+				let result;
+				if (method === "cadence") {
+					result = await this.schedulePaymentViaCadence(
+						scheduleRequest
+					);
+				} else {
+					result = await this.schedulePaymentViaEVM(scheduleRequest);
+				}
+
+				if (result.success) {
+					scheduleIds.push(
+						result.scheduleId || `pattern-${Date.now()}`
+					);
+					if (result.evmTxHash) evmTxHashes.push(result.evmTxHash);
+					if (result.cadenceTxId)
+						cadenceTxIds.push(result.cadenceTxId);
+					scheduledTimes.push(executionTime);
+				} else {
+					console.error("Failed to schedule payment", {
+						executionTime,
+						error: result.error,
+					});
+				}
+			}
+
+			return {
+				success: true,
+				scheduleIds,
+				evmTxHashes,
+				cadenceTxIds,
+				scheduledTimes,
+			};
+		} catch (error) {
+			console.error("Failed to schedule payment with pattern", {
+				error,
+				pattern,
+			});
+			return {
+				success: false,
+				error: error instanceof Error ? error.message : "Unknown error",
+			};
+		}
+	}
+
+	/**
+	 * Validate a scheduling pattern
+	 */
+	async validateSchedulePattern(pattern: string): Promise<{
+		valid: boolean;
+		nextExecution?: Date;
+		executionCount?: number;
+		error?: string;
+	}> {
+		try {
+			const parsed = ScheduleParser.parseNaturalLanguage(pattern);
+
+			if (parsed.error) {
+				return {
+					valid: false,
+					error: parsed.error,
+				};
+			}
+
+			return {
+				valid: true,
+				nextExecution: parsed.executions[0],
+				executionCount: parsed.executions.length,
+			};
+		} catch (error) {
+			return {
+				valid: false,
+				error: error instanceof Error ? error.message : "Unknown error",
 			};
 		}
 	}

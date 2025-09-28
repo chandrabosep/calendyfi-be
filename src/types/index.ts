@@ -221,3 +221,123 @@ export interface FlowExecutionResult {
 	error?: string;
 	executedAt?: Date;
 }
+
+// Advanced Scheduling Types
+export interface RecurringSchedule {
+	type: "daily" | "weekly" | "monthly" | "yearly" | "custom";
+	interval: number; // Every X days/weeks/months/years
+	startDate: Date;
+	endDate?: Date; // Optional end date
+	daysOfWeek?: number[]; // 0-6 (Sunday-Saturday) for weekly schedules
+	dayOfMonth?: number; // 1-31 for monthly schedules
+	timeOfDay?: string; // HH:MM format
+	timezone?: string;
+}
+
+export interface CustomSchedule {
+	type: "custom";
+	pattern: string; // Natural language pattern like "every 5 minutes", "every week for 3 months"
+	startDate: Date;
+	endDate?: Date;
+	timezone?: string;
+}
+
+export interface AdvancedScheduleRequest {
+	recipient: string;
+	amount: string;
+	userId: string;
+	eventId?: string;
+	description?: string;
+	method?: "evm" | "cadence";
+	scheduleType: "once" | "recurring" | "custom";
+	// For one-time scheduling
+	delaySeconds?: number;
+	scheduledTime?: Date;
+	// For recurring scheduling
+	recurringSchedule?: RecurringSchedule;
+	// For custom scheduling
+	customSchedule?: CustomSchedule;
+}
+
+export interface SchedulePattern {
+	pattern: string;
+	nextExecution: Date;
+	remainingExecutions?: number;
+	isValid: boolean;
+	error?: string;
+}
+
+export interface ParsedSchedule {
+	type: "once" | "recurring" | "custom";
+	executions: Date[];
+	pattern?: string;
+	error?: string;
+}
+
+// EVM Bridge Types
+export interface EVMBridgeConfig {
+	contractAddress: string;
+	cadenceAddress: string;
+	rpcUrl: string;
+	chainId: number;
+	explorerBase: string;
+}
+
+export interface EVMSchedule {
+	id: string;
+	recipient: string;
+	amount: string;
+	delaySeconds: number;
+	createdAt: Date;
+	creator: string;
+	bridgeTriggered: boolean;
+	executed: boolean;
+	evmTxHash?: string;
+	cadenceTxId?: string;
+}
+
+export interface EVMScheduleRequest {
+	recipient: string;
+	amount: string;
+	delaySeconds: number;
+	userId?: string;
+	eventId?: string;
+}
+
+export interface EVMBridgeEvent {
+	scheduleId: string;
+	recipient: string;
+	amount: string;
+	delaySeconds: number;
+	timestamp: number;
+	caller: string;
+	blockNumber: number;
+	transactionHash: string;
+}
+
+export interface BridgeCallRequest {
+	scheduleId: string;
+	recipient: string;
+	amount: string;
+	delaySeconds: number;
+	evmTxHash: string;
+	blockNumber: number;
+}
+
+export interface BridgeExecutionResult {
+	success: boolean;
+	cadenceTxId?: string;
+	error?: string;
+	executedAt?: Date;
+}
+
+export interface EVMContractABI {
+	schedulePayment: string;
+	getSchedule: string;
+	getSchedulesByCreator: string;
+	getTotalSchedules: string;
+	events: {
+		BridgeCallRequested: string;
+		ScheduleCreated: string;
+	};
+}

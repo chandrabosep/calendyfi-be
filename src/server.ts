@@ -6,11 +6,15 @@ import { config } from "./config";
 import authRoutes from "./api/auth";
 import calendarRoutes from "./api/calendar";
 import walletRoutes from "./api/wallet";
+import evmBridgeRoutes from "./api/evm-bridge";
 import flowSchedulerRoutes from "./api/flow-scheduler";
+import multiChainSchedulerRoutes from "./api/multi-chain-scheduler";
+import autoSchedulerRoutes from "./api/auto-scheduler";
 import { ApiResponse } from "./types";
 import { startScheduler, stopScheduler } from "../src/services/scheduler";
 import { checkDatabaseConnection, disconnectDatabase } from "./db/client";
 import { aiOnlyDetectEvents } from "./scripts/ai-only-detector";
+import { evmBridgeService } from "./services/evm-bridge";
 
 const app = express();
 
@@ -83,7 +87,10 @@ app.get("/health", async (req, res) => {
 app.use("/api/auth", authRoutes);
 app.use("/api/calendar", calendarRoutes);
 app.use("/api/wallet", walletRoutes);
-app.use("/api/flow-scheduler", flowSchedulerRoutes);
+app.use("/api/evm-bridge", evmBridgeRoutes); // Primary scheduler - EVM Bridge
+app.use("/api/flow-scheduler", flowSchedulerRoutes); // Legacy Flow scheduler
+app.use("/api/multi-chain-scheduler", multiChainSchedulerRoutes);
+app.use("/api/auto-scheduler", autoSchedulerRoutes);
 
 // 404 handler
 app.use((req, res) => {
@@ -154,15 +161,28 @@ const server = app.listen(config.port, () => {
 	console.info("⏰ Transaction scheduler started - checking every minute");
 	startScheduler(1); // Check every minute
 
+	// Start EVM bridge event listener (PRIMARY SCHEDULER)
+	console.info(
+		"🌉 Starting EVM Bridge Scheduler (Primary) - listening for contract events"
+	);
+	console.info(
+		"📋 Contract Address:",
+		evmBridgeService.getConfig().contractAddress
+	);
+	console.info("🔗 Chain ID:", evmBridgeService.getConfig().chainId);
+	evmBridgeService.startEventListener();
+
 	// Clean up interval on shutdown
 	process.on("SIGTERM", () => {
 		clearInterval(aiMonitorInterval);
 		stopScheduler();
+		evmBridgeService.stopEventListener();
 	});
 
 	process.on("SIGINT", () => {
 		clearInterval(aiMonitorInterval);
 		stopScheduler();
+		evmBridgeService.stopEventListener();
 	});
 });
 
@@ -170,6 +190,7 @@ const server = app.listen(config.port, () => {
 process.on("SIGTERM", async () => {
 	console.info("SIGTERM received, shutting down gracefully");
 	stopScheduler();
+	evmBridgeService.stopEventListener();
 	await disconnectDatabase();
 	server.close(() => {
 		console.info("Server closed");
@@ -180,6 +201,7 @@ process.on("SIGTERM", async () => {
 process.on("SIGINT", async () => {
 	console.info("SIGINT received, shutting down gracefully");
 	stopScheduler();
+	evmBridgeService.stopEventListener();
 	await disconnectDatabase();
 	server.close(() => {
 		console.info("Server closed");

@@ -199,6 +199,147 @@ async function aiOnlyDetectEvents() {
 									scheduledTime:
 										parsedCommand.scheduledTime?.toISOString(),
 								});
+
+								// Auto-trigger Flow scheduling for Flow transactions
+								console.info(
+									"DEBUG: Checking Flow scheduling",
+									{
+										chain: parsedCommand.parameters.chain,
+										action: parsedCommand.action.type,
+										eventId: eventData.googleEventId,
+										isFlow:
+											parsedCommand.parameters.chain ===
+												"Flow" ||
+											parsedCommand.parameters.chain ===
+												"Flow EVM" ||
+											parsedCommand.parameters.chain ===
+												"Flow Cadence",
+									}
+								);
+
+								if (
+									parsedCommand.parameters.chain === "Flow" ||
+									parsedCommand.parameters.chain ===
+										"Flow EVM" ||
+									parsedCommand.parameters.chain ===
+										"Flow Cadence"
+								) {
+									console.info(
+										"Auto-triggering Flow scheduling for Flow transaction",
+										{
+											eventId: eventData.googleEventId,
+											chain: parsedCommand.parameters
+												.chain,
+											action: parsedCommand.action.type,
+										}
+									);
+
+									// Trigger Flow scheduling automatically
+									try {
+										const { createFlowSchedulerService } =
+											await import(
+												"../services/flow-scheduler"
+											);
+										const flowSchedulerService =
+											createFlowSchedulerService();
+										const amount =
+											parsedCommand.parameters.amount
+												?.value ||
+											parsedCommand.parameters.amount;
+										const recipient =
+											parsedCommand.parameters.recipient
+												?.address ||
+											parsedCommand.parameters.recipient;
+
+										if (amount && recipient) {
+											// Calculate delay from scheduled time
+											const scheduledTime =
+												parsedCommand.scheduledTime ||
+												eventData.startTime;
+											const delaySeconds = Math.max(
+												0,
+												Math.floor(
+													(scheduledTime.getTime() -
+														Date.now()) /
+														1000
+												)
+											);
+
+											console.info(
+												"Auto-scheduling Flow transaction",
+												{
+													eventId:
+														eventData.googleEventId,
+													recipient,
+													amount: amount.toString(),
+													delaySeconds,
+													scheduledTime:
+														scheduledTime.toISOString(),
+												}
+											);
+
+											const flowResult =
+												await flowSchedulerService.schedulePaymentViaEVM(
+													{
+														recipient,
+														amount: amount.toString(),
+														delaySeconds,
+														userId: user.id,
+													}
+												);
+
+											if (flowResult.success) {
+												// Update the calendar event with Flow scheduling info
+												await prisma.calendarEvent.update(
+													{
+														where: {
+															googleEventId:
+																eventData.googleEventId,
+														},
+														data: {
+															flowScheduleId:
+																flowResult.scheduleId,
+															flowEvmTxHash:
+																flowResult.evmTxHash,
+															flowCadenceTxId:
+																flowResult.cadenceTxId,
+														},
+													}
+												);
+
+												console.info(
+													"Flow transaction auto-scheduled successfully",
+													{
+														eventId:
+															eventData.googleEventId,
+														scheduleId:
+															flowResult.scheduleId,
+														evmTxHash:
+															flowResult.evmTxHash,
+													}
+												);
+											} else {
+												console.warn(
+													"Failed to auto-schedule Flow transaction",
+													{
+														eventId:
+															eventData.googleEventId,
+														error: flowResult.error,
+													}
+												);
+											}
+										}
+									} catch (flowError) {
+										console.error(
+											"Error auto-scheduling Flow transaction",
+											{
+												flowError,
+												eventId:
+													eventData.googleEventId,
+											}
+										);
+									}
+								}
 							}
 						}
 

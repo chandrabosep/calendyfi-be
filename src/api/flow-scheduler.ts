@@ -5,6 +5,9 @@ import {
 	ApiResponse,
 	FlowScheduleRequest,
 	FlowScheduledPayment,
+	AdvancedScheduleRequest,
+	RecurringSchedule,
+	CustomSchedule,
 } from "../types";
 import Joi from "joi";
 import rateLimit from "express-rate-limit";
@@ -25,6 +28,59 @@ const schedulePaymentSchema = Joi.object({
 
 const executePaymentSchema = Joi.object({
 	paymentId: Joi.string().required(),
+});
+
+// Advanced scheduling validation schemas
+const advancedScheduleSchema = Joi.object({
+	recipient: Joi.string().required(),
+	amount: Joi.string().required(),
+	userId: Joi.string().required(),
+	eventId: Joi.string().optional(),
+	description: Joi.string().optional(),
+	method: Joi.string().valid("evm", "cadence").default("evm"),
+	scheduleType: Joi.string().valid("once", "recurring", "custom").required(),
+	// For one-time scheduling
+	delaySeconds: Joi.number().integer().min(0).optional(),
+	scheduledTime: Joi.date().optional(),
+	// For recurring scheduling
+	recurringSchedule: Joi.object({
+		type: Joi.string()
+			.valid("daily", "weekly", "monthly", "yearly", "custom")
+			.required(),
+		interval: Joi.number().integer().min(1).required(),
+		startDate: Joi.date().required(),
+		endDate: Joi.date().optional(),
+		daysOfWeek: Joi.array()
+			.items(Joi.number().integer().min(0).max(6))
+			.optional(),
+		dayOfMonth: Joi.number().integer().min(1).max(31).optional(),
+		timeOfDay: Joi.string()
+			.pattern(/^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/)
+			.optional(),
+		timezone: Joi.string().optional(),
+	}).optional(),
+	// For custom scheduling
+	customSchedule: Joi.object({
+		type: Joi.string().valid("custom").required(),
+		pattern: Joi.string().required(),
+		startDate: Joi.date().required(),
+		endDate: Joi.date().optional(),
+		timezone: Joi.string().optional(),
+	}).optional(),
+});
+
+const patternScheduleSchema = Joi.object({
+	recipient: Joi.string().required(),
+	amount: Joi.string().required(),
+	userId: Joi.string().required(),
+	pattern: Joi.string().required(),
+	method: Joi.string().valid("evm", "cadence").default("evm"),
+	eventId: Joi.string().optional(),
+	description: Joi.string().optional(),
+});
+
+const validatePatternSchema = Joi.object({
+	pattern: Joi.string().required(),
 });
 
 // Rate limiting for scheduling operations
@@ -193,7 +249,7 @@ router.get("/payments", async (req: Request, res: Response) => {
 
 			// Match with on-chain data
 			payments = payments.filter((payment) =>
-				userPayments.some((up) => up.scheduleId === payment.id)
+				userPayments.some((up: any) => up.scheduleId === payment.id)
 			);
 		}
 
@@ -281,7 +337,7 @@ router.get("/payments/:paymentId", async (req: Request, res: Response) => {
 		console.info("Fetching payment by ID", { paymentId });
 
 		const result = await flowSchedulerService.getScheduledPaymentById(
-			paymentId
+			paymentId as string
 		);
 
 		if (!result.success) {
@@ -327,7 +383,9 @@ router.post("/execute", async (req: Request, res: Response) => {
 
 		// Check if payment is ready for execution
 		const readinessCheck =
-			await flowSchedulerService.isPaymentReadyForExecution(paymentId);
+			await flowSchedulerService.isPaymentReadyForExecution(
+				paymentId as string
+			);
 
 		if (!readinessCheck.ready) {
 			return res.status(400).json({
@@ -343,7 +401,7 @@ router.post("/execute", async (req: Request, res: Response) => {
 
 		// Execute the payment
 		const result = await flowSchedulerService.executeScheduledPayment(
-			paymentId
+			paymentId as string
 		);
 
 		if (!result.success) {
@@ -360,7 +418,7 @@ router.post("/execute", async (req: Request, res: Response) => {
 				data: {
 					executed: true,
 					executedAt: new Date(),
-					executionTxId: result.txId,
+					executionTxId: result.evmTxHash,
 				},
 			});
 		} catch (dbError) {
@@ -373,14 +431,14 @@ router.post("/execute", async (req: Request, res: Response) => {
 
 		console.info("Payment executed successfully", {
 			paymentId,
-			txId: result.txId,
+			evmTxHash: result.evmTxHash,
 		});
 
 		return res.json({
 			success: true,
 			data: {
 				paymentId,
-				txId: result.txId,
+				evmTxHash: result.evmTxHash,
 				executedAt: new Date(),
 				message: "Payment executed successfully",
 			},
@@ -581,6 +639,359 @@ router.post("/schedule-from-event", async (req: Request, res: Response) => {
 			success: false,
 			error: "Failed to schedule payment from event",
 			details: error instanceof Error ? error.message : "Unknown error",
+		} as ApiResponse);
+	}
+});
+
+/**
+ * Schedule advanced payment patterns (recurring, custom, etc.)
+ */
+router.post(
+	"/schedule-advanced",
+	scheduleLimit,
+	async (req: Request, res: Response) => {
+		try {
+			// Validate input
+			const { error, value } = advancedScheduleSchema.validate(req.body);
+			if (error) {
+				return res.status(400).json({
+					success: false,
+					error: "Invalid input data",
+					details: error.details[0]?.message || "Validation error",
+				} as ApiResponse);
+			}
+
+			const request: AdvancedScheduleRequest = value;
+
+			console.info("Scheduling advanced payment", {
+				scheduleType: request.scheduleType,
+				recipient: request.recipient,
+				amount: request.amount,
+				userId: request.userId,
+			});
+
+			// Verify user exists
+			const user = await prisma.user.findUnique({
+				where: { id: request.userId },
+			});
+
+			if (!user) {
+				return res.status(404).json({
+					success: false,
+					error: "User not found",
+				} as ApiResponse);
+			}
+
+			// Schedule the advanced payment
+			const result = await flowSchedulerService.scheduleAdvancedPayment(
+				request
+			);
+
+			if (!result.success) {
+				return res.status(500).json({
+					success: false,
+					error:
+						result.error || "Failed to schedule advanced payment",
+				} as ApiResponse);
+			}
+
+			// Store scheduled payments in database
+			if (result.scheduleIds && result.scheduledTimes) {
+				try {
+					for (let i = 0; i < result.scheduleIds.length; i++) {
+						await prisma.flowScheduledPayment.create({
+							data: {
+								scheduleId: result.scheduleIds[i],
+								userId: request.userId,
+								recipient: request.recipient,
+								amount: request.amount,
+								delaySeconds: Math.floor(
+									(result.scheduledTimes[i].getTime() -
+										Date.now()) /
+										1000
+								),
+								scheduledTime: result.scheduledTimes[i],
+								method: request.method || "evm",
+								evmTxHash: result.evmTxHashes?.[i] || undefined,
+								cadenceTxId:
+									result.cadenceTxIds?.[i] || undefined,
+								eventId: request.eventId,
+								description: request.description,
+								executed: false,
+							},
+						});
+					}
+				} catch (dbError) {
+					console.warn(
+						"Failed to store advanced scheduled payments in database",
+						{
+							dbError,
+						}
+					);
+					// Continue - the payments are still scheduled on-chain
+				}
+			}
+
+			console.info("Advanced payment scheduled successfully", {
+				scheduleIds: result.scheduleIds,
+				scheduleType: request.scheduleType,
+				executionCount: result.scheduleIds?.length || 0,
+			});
+
+			return res.json({
+				success: true,
+				data: {
+					scheduleIds: result.scheduleIds,
+					evmTxHashes: result.evmTxHashes,
+					cadenceTxIds: result.cadenceTxIds,
+					scheduledTimes: result.scheduledTimes,
+					executionCount: result.scheduleIds?.length || 0,
+					message: `Advanced payment scheduled successfully with ${
+						result.scheduleIds?.length || 0
+					} executions`,
+				},
+			} as ApiResponse);
+		} catch (error) {
+			console.error("Failed to schedule advanced payment", { error });
+			return res.status(500).json({
+				success: false,
+				error: "Failed to schedule advanced payment",
+				details:
+					error instanceof Error ? error.message : "Unknown error",
+			} as ApiResponse);
+		}
+	}
+);
+
+/**
+ * Schedule payment with natural language pattern
+ */
+router.post(
+	"/schedule-pattern",
+	scheduleLimit,
+	async (req: Request, res: Response) => {
+		try {
+			// Validate input
+			const { error, value } = patternScheduleSchema.validate(req.body);
+			if (error) {
+				return res.status(400).json({
+					success: false,
+					error: "Invalid input data",
+					details: error.details[0]?.message || "Validation error",
+				} as ApiResponse);
+			}
+
+			const {
+				recipient,
+				amount,
+				userId,
+				pattern,
+				method,
+				eventId,
+				description,
+			} = value;
+
+			console.info("Scheduling payment with pattern", {
+				pattern,
+				recipient,
+				amount,
+				userId,
+			});
+
+			// Verify user exists
+			const user = await prisma.user.findUnique({
+				where: { id: userId },
+			});
+
+			if (!user) {
+				return res.status(404).json({
+					success: false,
+					error: "User not found",
+				} as ApiResponse);
+			}
+
+			// Schedule the payment with pattern
+			const result = await flowSchedulerService.scheduleWithPattern(
+				recipient,
+				amount,
+				userId,
+				pattern,
+				method
+			);
+
+			if (!result.success) {
+				return res.status(500).json({
+					success: false,
+					error:
+						result.error ||
+						"Failed to schedule payment with pattern",
+				} as ApiResponse);
+			}
+
+			// Store scheduled payments in database
+			if (result.scheduleIds && result.scheduledTimes) {
+				try {
+					for (let i = 0; i < result.scheduleIds.length; i++) {
+						await prisma.flowScheduledPayment.create({
+							data: {
+								scheduleId: result.scheduleIds[i],
+								userId,
+								recipient,
+								amount,
+								delaySeconds: Math.floor(
+									(result.scheduledTimes[i].getTime() -
+										Date.now()) /
+										1000
+								),
+								scheduledTime: result.scheduledTimes[i],
+								method: method || "evm",
+								evmTxHash: result.evmTxHashes?.[i] || undefined,
+								cadenceTxId:
+									result.cadenceTxIds?.[i] || undefined,
+								eventId,
+								description:
+									description || `Pattern: ${pattern}`,
+								executed: false,
+							},
+						});
+					}
+				} catch (dbError) {
+					console.warn(
+						"Failed to store pattern scheduled payments in database",
+						{
+							dbError,
+						}
+					);
+					// Continue - the payments are still scheduled on-chain
+				}
+			}
+
+			console.info("Pattern payment scheduled successfully", {
+				pattern,
+				scheduleIds: result.scheduleIds,
+				executionCount: result.scheduleIds?.length || 0,
+			});
+
+			return res.json({
+				success: true,
+				data: {
+					pattern,
+					scheduleIds: result.scheduleIds,
+					evmTxHashes: result.evmTxHashes,
+					cadenceTxIds: result.cadenceTxIds,
+					scheduledTimes: result.scheduledTimes,
+					executionCount: result.scheduleIds?.length || 0,
+					message: `Payment scheduled successfully with pattern: ${pattern}`,
+				},
+			} as ApiResponse);
+		} catch (error) {
+			console.error("Failed to schedule payment with pattern", { error });
+			return res.status(500).json({
+				success: false,
+				error: "Failed to schedule payment with pattern",
+				details:
+					error instanceof Error ? error.message : "Unknown error",
+			} as ApiResponse);
+		}
+	}
+);
+
+/**
+ * Validate a scheduling pattern
+ */
+router.post("/validate-pattern", async (req: Request, res: Response) => {
+	try {
+		// Validate input
+		const { error, value } = validatePatternSchema.validate(req.body);
+		if (error) {
+			return res.status(400).json({
+				success: false,
+				error: "Invalid input data",
+				details: error.details[0]?.message || "Validation error",
+			} as ApiResponse);
+		}
+
+		const { pattern } = value;
+
+		console.info("Validating scheduling pattern", { pattern });
+
+		// Validate the pattern
+		const result = await flowSchedulerService.validateSchedulePattern(
+			pattern
+		);
+
+		return res.json({
+			success: true,
+			data: {
+				pattern,
+				valid: result.valid,
+				nextExecution: result.nextExecution,
+				executionCount: result.executionCount,
+				error: result.error,
+				message: result.valid
+					? `Pattern is valid with ${result.executionCount} executions`
+					: `Pattern is invalid: ${result.error}`,
+			},
+		} as ApiResponse);
+	} catch (error) {
+		console.error("Failed to validate pattern", { error });
+		return res.status(500).json({
+			success: false,
+			error: "Failed to validate pattern",
+			details: error instanceof Error ? error.message : "Unknown error",
+		} as ApiResponse);
+	}
+});
+
+/**
+ * Get supported scheduling patterns
+ */
+router.get("/patterns", async (req: Request, res: Response) => {
+	try {
+		const supportedPatterns = [
+			{
+				category: "Time-based",
+				patterns: [
+					"after 5 minutes",
+					"after 1 hour",
+					"after 2 days",
+					"after 1 week",
+					"after 1 month",
+				],
+			},
+			{
+				category: "Recurring",
+				patterns: [
+					"every 1 minute",
+					"every 5 minutes",
+					"every 1 hour",
+					"every day",
+					"every week",
+					"every month",
+				],
+			},
+			{
+				category: "Conditional",
+				patterns: [
+					"every day until 2024-12-31",
+					"every week for 3 months",
+					"every month for 1 year",
+				],
+			},
+		];
+
+		return res.json({
+			success: true,
+			data: {
+				patterns: supportedPatterns,
+				message: "Supported scheduling patterns",
+			},
+		} as ApiResponse);
+	} catch (error) {
+		console.error("Failed to get supported patterns", { error });
+		return res.status(500).json({
+			success: false,
+			error: "Failed to get supported patterns",
 		} as ApiResponse);
 	}
 });

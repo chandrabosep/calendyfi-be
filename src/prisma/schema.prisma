@@ -57,9 +57,9 @@ model CalendarEvent {
   executedAt          DateTime?
   executionHash       String?
   isExecuted          Boolean   @default(false)
-  flowScheduleId      String?
-  flowEvmTxHash       String?
   flowCadenceTxId     String?
+  flowEvmTxHash       String?
+  flowScheduleId      String?
   user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("calendar_events")
@@ -125,7 +125,7 @@ model FlowScheduledPayment {
   amount        String
   delaySeconds  Int
   scheduledTime DateTime
-  method        String    @default("evm") // "evm" or "cadence"
+  method        String    @default("evm")
   evmTxHash     String?
   cadenceTxId   String?
   eventId       String?

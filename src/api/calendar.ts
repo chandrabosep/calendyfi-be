@@ -384,6 +384,121 @@ async function processAndStoreEvents(
 							intent: parsedCommand.intent.type,
 							action: parsedCommand.action.type,
 						});
+
+						// Auto-trigger EVM Bridge scheduling for Flow transactions
+						if (
+							parsedCommand.parameters.chain === "Flow" ||
+							parsedCommand.parameters.chain === "Flow EVM" ||
+							parsedCommand.parameters.chain === "Flow Cadence" ||
+							parsedCommand.action.type === "send" ||
+							parsedCommand.action.type === "pay" ||
+							parsedCommand.action.type === "transfer"
+						) {
+							console.info(
+								"🚀 Auto-triggering EVM Bridge scheduling for Flow transaction",
+								{
+									eventId: eventData.googleEventId,
+									chain: parsedCommand.parameters.chain,
+									action: parsedCommand.action.type,
+								}
+							);
+
+							// Trigger EVM Bridge scheduling automatically
+							try {
+								const { evmBridgeService } = await import(
+									"../services/evm-bridge"
+								);
+								const amount =
+									parsedCommand.parameters.amount?.value ||
+									parsedCommand.parameters.amount;
+								const recipient =
+									parsedCommand.parameters.recipient
+										?.address ||
+									parsedCommand.parameters.recipient;
+
+								if (amount && recipient) {
+									// Calculate delay from scheduled time
+									const scheduledTime =
+										parsedCommand.scheduledTime ||
+										eventData.startTime;
+									const delaySeconds = Math.max(
+										0,
+										Math.floor(
+											(scheduledTime.getTime() -
+												Date.now()) /
+												1000
+										)
+									);
+
+									console.info(
+										"🤖 Auto-scheduling via EVM Bridge",
+										{
+											eventId: eventData.googleEventId,
+											recipient,
+											amount: amount.toString(),
+											delaySeconds,
+											scheduledTime:
+												scheduledTime.toISOString(),
+										}
+									);
+
+									const evmResult =
+										await evmBridgeService.scheduleFromCalendarEvent(
+											recipient,
+											amount.toString(),
+											delaySeconds,
+											eventData.googleEventId
+										);
+
+									if (evmResult.success) {
+										// Update the calendar event with EVM scheduling info
+										await prisma.calendarEvent.update({
+											where: {
+												googleEventId:
+													eventData.googleEventId,
+											},
+											data: {
+												flowScheduleId:
+													evmResult.scheduleId,
+												flowEvmTxHash:
+													evmResult.transactionHash,
+												flowCadenceTxId: "auto-bridged", // Cadence TX will be triggered automatically
+											},
+										});
+
+										console.info(
+											"🎉 EVM Bridge transaction auto-scheduled successfully",
+											{
+												eventId:
+													eventData.googleEventId,
+												scheduleId:
+													evmResult.scheduleId,
+												evmTxHash:
+													evmResult.transactionHash,
+												bridgeTriggered: true,
+											}
+										);
+									} else {
+										console.warn(
+											"❌ Failed to auto-schedule EVM Bridge transaction",
+											{
+												eventId:
+													eventData.googleEventId,
+												error: evmResult.error,
+											}
+										);
+									}
+								}
+							} catch (evmError) {
+								console.error(
+									"❌ Error auto-scheduling EVM Bridge transaction",
+									{
+										evmError,
+										eventId: eventData.googleEventId,
+									}
+								);
+							}
+						}
 					} else {
 						console.warn("AI event processing failed", {
 							eventId: eventData.googleEventId,
@@ -564,6 +679,60 @@ router.post("/process-ai-event", async (req: Request, res: Response) => {
 							(scheduledTime.getTime() - Date.now()) / 1000
 						)
 					);
+
+					// Debug: Log the scheduling details
+					console.info("Debug: Flow scheduling details", {
+						eventId,
+						title: event.title,
+						startTime: event.startTime.toISOString(),
+						parsedScheduledTime:
+							event.parsedScheduledTime?.toISOString(),
+						scheduledTime: scheduledTime.toISOString(),
+						now: new Date().toISOString(),
+						delaySeconds,
+						delayMinutes: delaySeconds / 60,
+						delayHours: delaySeconds / 3600,
+						recipient,
+						amount: amount.toString(),
+					});
+
+					// Warn if delaySeconds is 0 or very small
+					if (delaySeconds < 60) {
+						console.warn(
+							"WARNING: Flow transaction scheduled with very short delay",
+							{
+								eventId,
+								delaySeconds,
+								delayMinutes: delaySeconds / 60,
+								scheduledTime: scheduledTime.toISOString(),
+								now: new Date().toISOString(),
+								timeDiff: scheduledTime.getTime() - Date.now(),
+							}
+						);
+					}
+
+					// Prevent scheduling transactions with very short delays to avoid immediate execution
+					if (delaySeconds < 10) {
+						console.error(
+							"ERROR: Flow transaction delay is too short, skipping scheduling",
+							{
+								eventId,
+								delaySeconds,
+								scheduledTime: scheduledTime.toISOString(),
+								now: new Date().toISOString(),
+							}
+						);
+
+						return res.json({
+							success: false,
+							error: "Transaction scheduled time is too close to current time. Please schedule at least 10 seconds in the future.",
+							data: {
+								scheduledTime: scheduledTime.toISOString(),
+								currentTime: new Date().toISOString(),
+								delaySeconds,
+							},
+						} as ApiResponse);
+					}
 
 					const flowSchedulerService = createFlowSchedulerService();
 

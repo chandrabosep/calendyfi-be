@@ -288,22 +288,18 @@ export class AutoSchedulerService {
 						// Parse the pattern to get scheduling times
 						const parsedPattern =
 							ScheduleParser.parseNaturalLanguage(pattern);
-						if (
-							!parsedPattern.isValid ||
-							!parsedPattern.schedules
-						) {
+						if (parsedPattern.error) {
 							throw new Error(
 								`Invalid pattern: ${parsedPattern.error}`
 							);
 						}
 
 						const scheduleResults = [];
-						for (const schedule of parsedPattern.schedules) {
+						for (const executionTime of parsedPattern.executions) {
 							const delaySeconds = Math.max(
 								0,
 								Math.floor(
-									(schedule.executeAt.getTime() -
-										Date.now()) /
+									(executionTime.getTime() - Date.now()) /
 										1000
 								)
 							);
@@ -335,8 +331,9 @@ export class AutoSchedulerService {
 								txHashes: successfulSchedules
 									.map((r) => r.transactionHash)
 									.filter(Boolean),
-								scheduledTimes: parsedPattern.schedules?.map(
-									(s: any) => s.executeAt.toISOString()
+								scheduledTimes: parsedPattern.executions.map(
+									(executionTime) =>
+										executionTime.toISOString()
 								),
 							};
 							totalSchedules += successfulSchedules.length;

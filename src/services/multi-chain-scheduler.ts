@@ -94,7 +94,10 @@ export class MultiChainSchedulerService {
 					chain.deployerPrivateKey,
 					provider
 				);
-				const contractAddress = CONTRACT_ADDRESSES[chain.chainId];
+				const contractAddress =
+					CONTRACT_ADDRESSES[
+						chain.chainId as keyof typeof CONTRACT_ADDRESSES
+					];
 
 				if (contractAddress) {
 					let abi;
@@ -296,7 +299,8 @@ export class MultiChainSchedulerService {
 				const amountWei = ethers.parseEther(request.amount);
 
 				// Schedule payment on chain
-				const tx = await contract.schedulePayment(
+				if (!contract) throw new Error("Contract not available");
+				const tx = await (contract as any).schedulePayment(
 					request.recipient,
 					amountWei,
 					delaySeconds

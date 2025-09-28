@@ -151,7 +151,7 @@ export class PolygonPriceFeedService {
 			);
 		}
 
-		const data = await response.json();
+		const data = (await response.json()) as any;
 
 		if (data.status === "ERROR") {
 			throw new Error(

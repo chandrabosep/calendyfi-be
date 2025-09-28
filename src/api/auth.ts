@@ -110,22 +110,78 @@ router.get(
 	}
 );
 
-// Get current user info (requires session/auth middleware in real app)
-router.get("/me", async (req: Request, res: Response) => {
+// Check user connection status by email (no session needed)
+router.get("/status", async (req: Request, res: Response): Promise<void> => {
 	try {
-		// This would typically get user from session/JWT
-		// For now, we'll return a placeholder
+		const { email } = req.query;
+
+		if (!email || typeof email !== "string") {
+			res.status(400).json({
+				success: false,
+				error: "Email parameter required",
+			} as ApiResponse);
+			return;
+		}
+
+		// Find user by email
+		const user = await prisma.user.findUnique({
+			where: { email },
+			include: {
+				_count: {
+					select: {
+						events: true,
+					},
+				},
+			},
+		});
+
+		if (!user) {
+			res.json({
+				success: true,
+				data: {
+					connected: false,
+					hasCalendar: false,
+					hasWallet: false,
+				},
+			} as ApiResponse);
+			return;
+		}
+
+		// Check if user has wallet
+		const wallet = await prisma.wallet.findUnique({
+			where: { userId: user.id },
+			include: {
+				walletChains: {
+					where: { status: "ACTIVE" },
+				},
+			},
+		});
+
+		// Check if tokens are still valid
+		const hasValidTokens =
+			user.tokenExpiry && user.tokenExpiry > new Date();
+
 		res.json({
 			success: true,
 			data: {
-				message: "User info endpoint - implement session handling",
+				connected: true,
+				user: {
+					id: user.id,
+					email: user.email,
+					name: user.name,
+				},
+				hasCalendar: hasValidTokens,
+				hasWallet: !!wallet && wallet.status === "ACTIVE",
+				calendarEvents: user._count.events,
+				walletChains: wallet?.walletChains.length || 0,
+				tokenExpiry: user.tokenExpiry,
 			},
 		} as ApiResponse);
 	} catch (error) {
-		console.error("Failed to get user info", { error });
+		console.error("Failed to get user status", { error });
 		res.status(500).json({
 			success: false,
-			error: "Failed to get user info",
+			error: "Failed to get user status",
 		} as ApiResponse);
 	}
 });

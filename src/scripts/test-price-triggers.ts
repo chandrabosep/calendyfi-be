@@ -189,9 +189,14 @@ async function testPriceTriggers() {
 					console.log(
 						`✅ Cancelled trigger: ${triggerToCancel.fromToken} ${triggerToCancel.triggerType} $${triggerToCancel.targetPrice}`
 					);
+				} else {
+					console.log(
+						"❌ Failed to cancel trigger:",
+						cancelResult.error
+					);
 				}
 			} else {
-				console.log("❌ Failed to cancel trigger:", cancelResult.error);
+				console.log("❌ No triggers found to cancel");
 			}
 		}
 

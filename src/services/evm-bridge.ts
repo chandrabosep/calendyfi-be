@@ -50,8 +50,8 @@ transaction(recipient: String, amount: UInt256, delaySeconds: UInt64, evmTxHash:
 `;
 
 export class EVMBridgeService {
-	private provider: ethers.JsonRpcProvider;
-	private contract: ethers.Contract;
+	private provider!: ethers.JsonRpcProvider;
+	private contract!: ethers.Contract;
 	private isListening: boolean = false;
 
 	constructor() {
@@ -268,7 +268,8 @@ export class EVMBridgeService {
 	public async getSchedule(scheduleId: string): Promise<EVMSchedule | null> {
 		try {
 			if (!this.contract) return null;
-			const schedule = await this.contract.getSchedule(scheduleId);
+			const contract = this.contract as any;
+			const schedule = await contract.getSchedule(scheduleId);
 			if (!schedule) return null;
 
 			return {
@@ -298,9 +299,8 @@ export class EVMBridgeService {
 	): Promise<EVMSchedule[]> {
 		try {
 			if (!this.contract) return [];
-			const scheduleIds = await this.contract.getSchedulesByCreator(
-				creator
-			);
+			const contract = this.contract as any;
+			const scheduleIds = await contract.getSchedulesByCreator(creator);
 			if (!scheduleIds) return [];
 			const schedules: EVMSchedule[] = [];
 
@@ -329,7 +329,8 @@ export class EVMBridgeService {
 	public async getTotalSchedules(): Promise<number> {
 		try {
 			if (!this.contract) return 0;
-			const total = await this.contract.getTotalSchedules();
+			const contract = this.contract as any;
+			const total = await contract.getTotalSchedules();
 			return Number(total || 0);
 		} catch (error) {
 			console.error("Error getting total schedules", { error });
@@ -373,7 +374,9 @@ export class EVMBridgeService {
 			const amountWei = ethers.parseEther(amount);
 
 			// Call schedulePayment on your UpdatedEVMScheduler contract
-			const tx = await this.contract!.schedulePayment(
+			if (!this.contract) throw new Error("Contract not initialized");
+			const contract = this.contract as any;
+			const tx = await contract.schedulePayment(
 				recipient,
 				amountWei,
 				delaySeconds

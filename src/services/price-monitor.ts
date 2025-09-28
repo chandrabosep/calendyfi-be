@@ -373,7 +373,7 @@ export class PriceMonitorService {
 
 				console.error("Failed to execute price trigger", {
 					triggerId: trigger.id,
-					error: result.error,
+					error: (result as any).error || "Unknown error",
 				});
 			}
 		} catch (error) {
@@ -502,7 +502,7 @@ export class PriceMonitorService {
 				throw new Error(`CoinGecko API error: ${response.statusText}`);
 			}
 
-			const data = await response.json();
+			const data = (await response.json()) as any;
 			const tokenData = data[coinGeckoId];
 			const price = tokenData?.usd;
 			const change24h = tokenData?.usd_24h_change;

@@ -87,8 +87,8 @@ export class ScheduleParser {
 			};
 		}
 
-		const value = parseInt(match[1]);
-		const unit = match[2];
+		const value = parseInt(match[1]!);
+		const unit = match[2]!;
 
 		let delayMs = 0;
 		switch (unit) {
@@ -132,7 +132,7 @@ export class ScheduleParser {
 		if (pattern.includes("min")) {
 			const match = pattern.match(/every\s+(\d+)\s*min/);
 			if (match) {
-				const minutes = parseInt(match[1]);
+				const minutes = parseInt(match[1]!);
 				return this.generateRecurringExecutions(
 					startDate,
 					minutes * 60 * 1000,
@@ -145,7 +145,7 @@ export class ScheduleParser {
 		if (pattern.includes("minute")) {
 			const match = pattern.match(/every\s+(\d+)\s+minute/);
 			if (match) {
-				const minutes = parseInt(match[1]);
+				const minutes = parseInt(match[1]!);
 				return this.generateRecurringExecutions(
 					startDate,
 					minutes * 60 * 1000,
@@ -348,8 +348,8 @@ export class ScheduleParser {
 		if (schedule.timeOfDay) {
 			const timeParts = schedule.timeOfDay.split(":");
 			if (timeParts.length === 2) {
-				const hours = parseInt(timeParts[0]);
-				const minutes = parseInt(timeParts[1]);
+				const hours = parseInt(timeParts[0]!);
+				const minutes = parseInt(timeParts[1]!);
 				nextExecution.setHours(hours, minutes, 0, 0);
 			}
 		}

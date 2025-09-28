@@ -86,12 +86,14 @@ async function testPolygonFreeTier() {
 				console.log("✅ Daily Aggregates API works!");
 				if (data.results && data.results.length > 0) {
 					const result = data.results[0];
-					console.log(`📈 AAPL on ${dateStr}:`);
-					console.log(`   Open: $${result.o}`);
-					console.log(`   High: $${result.h}`);
-					console.log(`   Low: $${result.l}`);
-					console.log(`   Close: $${result.c}`);
-					console.log(`   Volume: ${result.v.toLocaleString()}`);
+					if (result) {
+						console.log(`📈 AAPL on ${dateStr}:`);
+						console.log(`   Open: $${result.o}`);
+						console.log(`   High: $${result.h}`);
+						console.log(`   Low: $${result.l}`);
+						console.log(`   Close: $${result.c}`);
+						console.log(`   Volume: ${result.v.toLocaleString()}`);
+					}
 				}
 			} else {
 				const errorText = await response.text();
@@ -118,11 +120,13 @@ async function testPolygonFreeTier() {
 				console.log("✅ Crypto Aggregates API works!");
 				if (data.results && data.results.length > 0) {
 					const result = data.results[0];
-					console.log(`🪙 BTC on ${dateStr}:`);
-					console.log(`   Open: $${result.o}`);
-					console.log(`   High: $${result.h}`);
-					console.log(`   Low: $${result.l}`);
-					console.log(`   Close: $${result.c}`);
+					if (result) {
+						console.log(`🪙 BTC on ${dateStr}:`);
+						console.log(`   Open: $${result.o}`);
+						console.log(`   High: $${result.h}`);
+						console.log(`   Low: $${result.l}`);
+						console.log(`   Close: $${result.c}`);
+					}
 				}
 			} else {
 				const errorText = await response.text();
@@ -198,7 +202,9 @@ async function testPolygonFreeTier() {
 				console.log("✅ Previous Close API works!");
 				if (data.results && data.results.length > 0) {
 					const result = data.results[0];
-					console.log(`📈 AAPL Previous Close: $${result.c}`);
+					if (result) {
+						console.log(`📈 AAPL Previous Close: $${result.c}`);
+					}
 				}
 			} else {
 				const errorText = await response.text();

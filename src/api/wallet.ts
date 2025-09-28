@@ -16,12 +16,11 @@ const customSmartAccountService = new CustomSmartAccountService();
 
 // Validation schemas
 const onboardSchema = Joi.object({
-	userId: Joi.string().required(),
+	email: Joi.string().email().required(),
 	privyWalletAddress: Joi.string()
 		.pattern(/^0x[a-fA-F0-9]{40}$/)
 		.required(),
 	privyWalletId: Joi.string().optional(),
-	email: Joi.string().email().optional(),
 	chainIds: Joi.array()
 		.items(Joi.number().integer().positive())
 		.min(1)
@@ -85,34 +84,27 @@ router.post("/onboard", walletCreationLimit, async (req, res) => {
 			} as ApiResponse);
 		}
 
-		const { userId, privyWalletAddress, privyWalletId, email, chainIds } =
+		const { email, privyWalletAddress, privyWalletId, chainIds } =
 			value as {
-				userId: string;
+				email: string;
 				privyWalletAddress: string;
 				privyWalletId?: string;
-				email?: string;
 				chainIds?: number[];
 			};
 
-		// If userId is a Privy ID (starts with "did:privy:"), find the internal user ID
-		let internalUserId = userId;
-		if (userId.startsWith("did:privy:") && email) {
-			const user = await prisma.user.findUnique({
-				where: { email },
-			});
-			if (!user) {
-				return res.status(404).json({
-					success: false,
-					error: "User not found in database. Please ensure you're logged in with the same email used for calendar integration.",
-				} as ApiResponse);
-			}
-			internalUserId = user.id;
-			console.info("Mapped Privy user ID to internal user ID", {
-				privyUserId: userId,
-				internalUserId: user.id,
-				email,
-			});
+		// Find user by email
+		const user = await prisma.user.findUnique({
+			where: { email },
+		});
+
+		if (!user) {
+			return res.status(404).json({
+				success: false,
+				error: "User not found in database. Please ensure you're logged in with the same email used for calendar integration.",
+			} as ApiResponse);
 		}
+
+		const internalUserId = user.id;
 
 		// Check if user already has a wallet
 		const existing = await prisma.wallet.findUnique({
@@ -305,6 +297,394 @@ router.post("/onboard", walletCreationLimit, async (req, res) => {
 		return res.status(500).json({
 			success: false,
 			error: "Onboarding failed",
+			details: error instanceof Error ? error.message : "Unknown error",
+		} as ApiResponse);
+	}
+});
+
+/**
+ * Get individual smart wallets list by email (no session needed)
+ */
+router.get("/list", async (req, res) => {
+	try {
+		const { email } = req.query;
+
+		if (!email || typeof email !== "string") {
+			return res.status(400).json({
+				success: false,
+				error: "Email parameter required",
+			} as ApiResponse);
+		}
+
+		// Find user by email
+		const user = await prisma.user.findUnique({
+			where: { email },
+		});
+
+		if (!user) {
+			return res.status(404).json({
+				success: false,
+				error: "User not found",
+			} as ApiResponse);
+		}
+
+		// Get user's wallet with all chains
+		const wallet = await prisma.wallet.findUnique({
+			where: { userId: user.id },
+			include: {
+				walletChains: {
+					where: { status: "ACTIVE" },
+					orderBy: { chainId: "asc" },
+				},
+			},
+		});
+
+		if (!wallet || wallet.status !== "ACTIVE") {
+			return res.json({
+				success: true,
+				data: {
+					hasWallet: false,
+					wallets: [],
+					summary: {
+						totalWallets: 0,
+						fundedWallets: 0,
+						totalValueUSD: "0.00",
+					},
+				},
+			} as ApiResponse);
+		}
+
+		// Get chain configurations for display names
+		const safeSupportedChainIds = safeService.getSupportedChainIds();
+		const customSupportedChainIds =
+			customSmartAccountService.getSupportedChainIds();
+
+		const walletList = await Promise.all(
+			wallet.walletChains.map(async (wc) => {
+				try {
+					// Determine chain type and get config
+					let chainConfig;
+					let chainType: "safe" | "custom";
+
+					if (safeSupportedChainIds.includes(wc.chainId)) {
+						chainConfig = safeService.getChainConfiguration(
+							wc.chainId
+						);
+						chainType = "safe";
+					} else {
+						chainConfig =
+							customSmartAccountService.getChainConfiguration(
+								wc.chainId
+							);
+						chainType = "custom";
+					}
+
+					// Get balance (simplified - you might want to add actual balance checking)
+					let balance = "0.0";
+					let balanceUSD = "0.00";
+					let needsFunding = true;
+
+					// Try to get actual balance if possible
+					try {
+						const { createTransactionExecutor } = await import(
+							"../services/transaction-executor"
+						);
+						const executor = createTransactionExecutor();
+						const balanceInfo = await executor.getSafeBalanceInfo(
+							user.id,
+							wc.chainId
+						);
+
+						if (balanceInfo.success) {
+							balance = balanceInfo.balanceRBTC || "0.0";
+							needsFunding = parseFloat(balance) < 0.001; // Less than 0.001 native token
+						}
+					} catch (error) {
+						console.warn("Could not fetch balance for wallet", {
+							chainId: wc.chainId,
+							smartAccount: wc.smartAccount,
+						});
+					}
+
+					// Get explorer URL based on chain
+					const getExplorerUrl = (
+						chainId: number,
+						address: string
+					) => {
+						switch (chainId) {
+							case 1:
+								return `https://etherscan.io/address/${address}`;
+							case 11155111:
+								return `https://sepolia.etherscan.io/address/${address}`;
+							case 137:
+								return `https://polygonscan.com/address/${address}`;
+							case 31:
+								return `https://explorer.testnet.rsk.co/address/${address}`;
+							case 545:
+								return `https://evm-testnet.flowscan.org/address/${address}`;
+							default:
+								return "#";
+						}
+					};
+
+					// Get native token based on chain
+					const getNativeToken = (chainId: number) => {
+						switch (chainId) {
+							case 1:
+							case 11155111:
+								return "ETH";
+							case 137:
+								return "MATIC";
+							case 31:
+								return "RBTC";
+							case 545:
+								return "FLOW";
+							default:
+								return "ETH";
+						}
+					};
+
+					return {
+						chainId: wc.chainId,
+						chainName: chainConfig.name,
+						chainType,
+						smartAccount: wc.smartAccount,
+						balance,
+						balanceUSD,
+						status: wc.status,
+						needsFunding,
+						fundingAddress: wc.smartAccount, // Same as smart account address
+						explorerUrl: getExplorerUrl(
+							wc.chainId,
+							wc.smartAccount || ""
+						),
+						nativeToken: getNativeToken(wc.chainId),
+						createdAt: wc.createdAt,
+					};
+				} catch (error) {
+					console.error("Error processing wallet chain", {
+						chainId: wc.chainId,
+						error:
+							error instanceof Error
+								? error.message
+								: "Unknown error",
+					});
+
+					return {
+						chainId: wc.chainId,
+						chainName: `Chain ${wc.chainId}`,
+						chainType: "unknown" as any,
+						smartAccount: wc.smartAccount,
+						balance: "0.0",
+						balanceUSD: "0.00",
+						status: wc.status,
+						needsFunding: true,
+						fundingAddress: wc.smartAccount,
+						explorerUrl: "#",
+						nativeToken: "ETH",
+						createdAt: wc.createdAt,
+					};
+				}
+			})
+		);
+
+		// Calculate summary
+		const fundedWallets = walletList.filter((w) => !w.needsFunding).length;
+		const totalValueUSD = walletList
+			.reduce((sum, w) => sum + parseFloat(w.balanceUSD), 0)
+			.toFixed(2);
+
+		return res.json({
+			success: true,
+			data: {
+				hasWallet: true,
+				agentAddress: wallet.agentAddress,
+				wallets: walletList,
+				summary: {
+					totalWallets: walletList.length,
+					fundedWallets,
+					totalValueUSD,
+				},
+			},
+		} as ApiResponse);
+	} catch (error) {
+		console.error("Failed to get wallet list", { error });
+		return res.status(500).json({
+			success: false,
+			error: "Failed to get wallet list",
+			details: error instanceof Error ? error.message : "Unknown error",
+		} as ApiResponse);
+	}
+});
+
+/**
+ * Get funding information for specific wallet
+ */
+router.get("/funding-info/:chainId", async (req, res) => {
+	try {
+		const { chainId } = req.params;
+		const { email } = req.query;
+
+		if (!email || typeof email !== "string") {
+			return res.status(400).json({
+				success: false,
+				error: "Email parameter required",
+			} as ApiResponse);
+		}
+
+		if (!chainId || isNaN(parseInt(chainId))) {
+			return res.status(400).json({
+				success: false,
+				error: "Valid chainId parameter required",
+			} as ApiResponse);
+		}
+
+		const chainIdNum = parseInt(chainId);
+
+		// Find user by email
+		const user = await prisma.user.findUnique({
+			where: { email },
+		});
+
+		if (!user) {
+			return res.status(404).json({
+				success: false,
+				error: "User not found",
+			} as ApiResponse);
+		}
+
+		// Get user's wallet for specific chain
+		const wallet = await prisma.wallet.findUnique({
+			where: { userId: user.id },
+			include: {
+				walletChains: {
+					where: {
+						chainId: chainIdNum,
+						status: "ACTIVE",
+					},
+				},
+			},
+		});
+
+		if (
+			!wallet ||
+			wallet.status !== "ACTIVE" ||
+			wallet.walletChains.length === 0
+		) {
+			return res.status(404).json({
+				success: false,
+				error: "Wallet not found for this chain",
+			} as ApiResponse);
+		}
+
+		const walletChain = wallet.walletChains[0];
+		if (!walletChain || !walletChain.smartAccount) {
+			return res.status(404).json({
+				success: false,
+				error: "Smart account not found for this chain",
+			} as ApiResponse);
+		}
+
+		// Get chain configuration
+		let chainConfig;
+		let chainType: "safe" | "custom";
+
+		const safeSupportedChainIds = safeService.getSupportedChainIds();
+
+		if (safeSupportedChainIds.includes(chainIdNum)) {
+			chainConfig = safeService.getChainConfiguration(chainIdNum);
+			chainType = "safe";
+		} else {
+			chainConfig =
+				customSmartAccountService.getChainConfiguration(chainIdNum);
+			chainType = "custom";
+		}
+
+		// Get current balance
+		let currentBalance = "0.0";
+		try {
+			const { createTransactionExecutor } = await import(
+				"../services/transaction-executor"
+			);
+			const executor = createTransactionExecutor();
+			const balanceInfo = await executor.getSafeBalanceInfo(
+				user.id,
+				chainIdNum
+			);
+
+			if (balanceInfo.success) {
+				currentBalance = balanceInfo.balanceRBTC || "0.0";
+			}
+		} catch (error) {
+			console.warn("Could not fetch current balance", {
+				chainId: chainIdNum,
+			});
+		}
+
+		// Get explorer URL based on chain
+		const getExplorerUrl = (chainId: number, address: string) => {
+			switch (chainId) {
+				case 1:
+					return `https://etherscan.io/address/${address}`;
+				case 11155111:
+					return `https://sepolia.etherscan.io/address/${address}`;
+				case 137:
+					return `https://polygonscan.com/address/${address}`;
+				case 31:
+					return `https://explorer.testnet.rsk.co/address/${address}`;
+				case 545:
+					return `https://evm-testnet.flowscan.org/address/${address}`;
+				default:
+					return "#";
+			}
+		};
+
+		// Get native token based on chain
+		const getNativeToken = (chainId: number) => {
+			switch (chainId) {
+				case 1:
+				case 11155111:
+					return "ETH";
+				case 137:
+					return "MATIC";
+				case 31:
+					return "RBTC";
+				case 545:
+					return "FLOW";
+				default:
+					return "ETH";
+			}
+		};
+
+		const nativeToken = getNativeToken(chainIdNum);
+
+		return res.json({
+			success: true,
+			data: {
+				chainId: chainIdNum,
+				chainName: chainConfig.name,
+				chainType,
+				smartAccount: walletChain.smartAccount,
+				fundingAddress: walletChain.smartAccount, // Same as smart account
+				currentBalance,
+				nativeToken,
+				minimumAmount: "0.001",
+				recommendedAmount: "0.01",
+				explorerUrl: getExplorerUrl(
+					chainIdNum,
+					walletChain.smartAccount
+				),
+				instructions: `Send ${nativeToken} to this address to fund your smart wallet on ${chainConfig.name}`,
+				rpcUrl: chainConfig.rpcUrl,
+				// Note: QR code generation would be added here if needed
+				// qrCode: generateQRCode(walletChain.smartAccount)
+			},
+		} as ApiResponse);
+	} catch (error) {
+		console.error("Failed to get funding info", { error });
+		return res.status(500).json({
+			success: false,
+			error: "Failed to get funding information",
 			details: error instanceof Error ? error.message : "Unknown error",
 		} as ApiResponse);
 	}

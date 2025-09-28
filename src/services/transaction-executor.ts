@@ -833,11 +833,15 @@ export class TransactionExecutor {
 	): Promise<string> {
 		try {
 			// Create a temporary Safe transaction to estimate gas
+			// Use a dummy private key for gas estimation only
+			const dummyPrivateKey =
+				"0x0000000000000000000000000000000000000000000000000000000000000001";
 			const tempTransaction =
 				await this.safeService.createSafeTransaction(
 					chainId,
 					safeAddress,
-					[transaction]
+					[transaction],
+					dummyPrivateKey
 				);
 
 			// Get the transaction hash

@@ -118,7 +118,10 @@ export class FlowSchedulerService {
 			const amountWei = ethers.parseEther(request.amount);
 
 			// Schedule payment on EVM
-			const tx = await this.evmContract!.schedulePayment(
+			if (!this.evmContract)
+				throw new Error("EVM contract not initialized");
+			const evmContract = this.evmContract as any;
+			const tx = await evmContract.schedulePayment(
 				request.recipient,
 				amountWei,
 				request.delaySeconds
@@ -247,12 +250,15 @@ export class FlowSchedulerService {
 			}
 
 			// Get all schedule IDs by checking from 1 to nextScheduleId
-			const nextId = await this.evmContract!.nextScheduleId();
+			if (!this.evmContract)
+				throw new Error("EVM contract not initialized");
+			const evmContract = this.evmContract as any;
+			const nextId = await evmContract.nextScheduleId();
 			const payments: ScheduledPayment[] = [];
 
 			for (let i = 1; i < nextId; i++) {
 				try {
-					const schedule = await this.evmContract!.getSchedule(i);
+					const schedule = await evmContract.getSchedule(i);
 					if (schedule && schedule.id.toString() !== "0") {
 						payments.push({
 							id: schedule.id.toString(),
@@ -310,17 +316,19 @@ export class FlowSchedulerService {
 			}
 
 			// Get schedule IDs from EVM contract
-			const scheduleIds =
-				await this.evmContract!.getSchedulesForRecipient(recipient);
+			if (!this.evmContract)
+				throw new Error("EVM contract not initialized");
+			const evmContract = this.evmContract as any;
+			const scheduleIds = await evmContract.getSchedulesForRecipient(
+				recipient
+			);
 
 			const payments: ScheduledPayment[] = [];
 
 			// Get details for each schedule
 			for (const scheduleId of scheduleIds) {
 				try {
-					const schedule = await this.evmContract!.getSchedule(
-						scheduleId
-					);
+					const schedule = await evmContract.getSchedule(scheduleId);
 					if (!schedule) continue;
 
 					payments.push({
@@ -384,7 +392,10 @@ export class FlowSchedulerService {
 			console.info("Executing scheduled payment", { paymentId });
 
 			// Execute the schedule on EVM contract
-			const tx = await this.evmContract!.executeSchedule(paymentId);
+			if (!this.evmContract)
+				throw new Error("EVM contract not initialized");
+			const evmContract = this.evmContract as any;
+			const tx = await evmContract.executeSchedule(paymentId);
 			console.info("EVM transaction sent for execution", {
 				txHash: tx.hash,
 			});
@@ -451,7 +462,10 @@ export class FlowSchedulerService {
 				};
 			}
 
-			const schedule = await this.evmContract!.getSchedule(paymentId);
+			if (!this.evmContract)
+				throw new Error("EVM contract not initialized");
+			const evmContract = this.evmContract as any;
+			const schedule = await evmContract.getSchedule(paymentId);
 
 			if (!schedule || schedule.id.toString() === "0") {
 				return {

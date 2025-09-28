@@ -75,7 +75,7 @@ router.get("/schedule/:scheduleId", async (req, res) => {
 			} as ApiResponse);
 		}
 
-		res.json({
+		return res.json({
 			success: true,
 			data: schedule,
 		} as ApiResponse);
@@ -84,7 +84,7 @@ router.get("/schedule/:scheduleId", async (req, res) => {
 			error,
 			scheduleId: req.params.scheduleId,
 		});
-		res.status(500).json({
+		return res.status(500).json({
 			success: false,
 			error: "Failed to get schedule",
 		} as ApiResponse);
@@ -108,7 +108,7 @@ router.get("/schedules/creator/:creator", async (req, res) => {
 
 		const schedules = await evmBridgeService.getSchedulesByCreator(creator);
 
-		res.json({
+		return res.json({
 			success: true,
 			data: {
 				schedules,
@@ -121,7 +121,7 @@ router.get("/schedules/creator/:creator", async (req, res) => {
 			error,
 			creator: req.params.creator,
 		});
-		res.status(500).json({
+		return res.status(500).json({
 			success: false,
 			error: "Failed to get schedules",
 		} as ApiResponse);
@@ -174,7 +174,7 @@ router.post("/validate-address", async (req, res) => {
 
 		const isValid = /^0x[a-fA-F0-9]{40}$/.test(address);
 
-		res.json({
+		return res.json({
 			success: true,
 			data: {
 				address,
@@ -184,7 +184,7 @@ router.post("/validate-address", async (req, res) => {
 		} as ApiResponse);
 	} catch (error) {
 		console.error("Error validating address", { error });
-		res.status(500).json({
+		return res.status(500).json({
 			success: false,
 			error: "Failed to validate address",
 		} as ApiResponse);
@@ -234,7 +234,7 @@ router.post("/estimate-gas", async (req, res) => {
 		const gasPrice = 20000000000; // 20 gwei in wei
 		const estimatedCost = estimatedGas * gasPrice;
 
-		res.json({
+		return res.json({
 			success: true,
 			data: {
 				estimatedGas,
@@ -245,7 +245,7 @@ router.post("/estimate-gas", async (req, res) => {
 		} as ApiResponse);
 	} catch (error) {
 		console.error("Error estimating gas", { error });
-		res.status(500).json({
+		return res.status(500).json({
 			success: false,
 			error: "Failed to estimate gas",
 		} as ApiResponse);

@@ -1,5 +1,37 @@
 import { createPolygonPriceFeedService } from "../services/polygon-price-feed";
 
+// Type definitions for Polygon API responses
+interface PolygonMarketStatus {
+	market: string;
+}
+
+interface PolygonAggregateResult {
+	c: number; // close
+	h: number; // high
+	l: number; // low
+	o: number; // open
+	v: number; // volume
+	t: number; // timestamp
+}
+
+interface PolygonAggregatesResponse {
+	results?: PolygonAggregateResult[];
+	resultsCount?: number;
+	status?: string;
+}
+
+interface PolygonTickerDetails {
+	name?: string;
+	market?: string;
+	type?: string;
+	currency_name?: string;
+}
+
+interface PolygonTickerDetailsResponse {
+	results?: PolygonTickerDetails;
+	status?: string;
+}
+
 async function testPolygonFreeTier() {
 	console.log("🧪 Testing Polygon.io Free Tier Access");
 	console.log("=====================================");
@@ -22,7 +54,7 @@ async function testPolygonFreeTier() {
 			);
 
 			if (response.ok) {
-				const data = await response.json();
+				const data = (await response.json()) as PolygonMarketStatus;
 				console.log("✅ Market Status API works!");
 				console.log("📊 Market Status:", data.market);
 			} else {
@@ -49,7 +81,8 @@ async function testPolygonFreeTier() {
 			);
 
 			if (response.ok) {
-				const data = await response.json();
+				const data =
+					(await response.json()) as PolygonAggregatesResponse;
 				console.log("✅ Daily Aggregates API works!");
 				if (data.results && data.results.length > 0) {
 					const result = data.results[0];
@@ -80,7 +113,8 @@ async function testPolygonFreeTier() {
 			);
 
 			if (response.ok) {
-				const data = await response.json();
+				const data =
+					(await response.json()) as PolygonAggregatesResponse;
 				console.log("✅ Crypto Aggregates API works!");
 				if (data.results && data.results.length > 0) {
 					const result = data.results[0];
@@ -110,7 +144,8 @@ async function testPolygonFreeTier() {
 			);
 
 			if (response.ok) {
-				const data = await response.json();
+				const data =
+					(await response.json()) as PolygonTickerDetailsResponse;
 				console.log("✅ Ticker Details API works!");
 				if (data.results) {
 					console.log(`📋 AAPL Details:`);
@@ -158,7 +193,8 @@ async function testPolygonFreeTier() {
 			);
 
 			if (response.ok) {
-				const data = await response.json();
+				const data =
+					(await response.json()) as PolygonAggregatesResponse;
 				console.log("✅ Previous Close API works!");
 				if (data.results && data.results.length > 0) {
 					const result = data.results[0];

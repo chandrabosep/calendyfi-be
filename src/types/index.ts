@@ -341,3 +341,38 @@ export interface EVMContractABI {
 		ScheduleCreated: string;
 	};
 }
+
+// Multi-Chain Scheduling Types
+export interface MultiChainScheduleRequest {
+	recipient: string;
+	amount: string;
+	userId: string;
+	eventId?: string;
+	description?: string;
+	scheduleType: "once" | "recurring" | "custom";
+	chains: number[];
+	// For one-time scheduling
+	delaySeconds?: number;
+	scheduledTime?: Date;
+	// For recurring scheduling
+	recurringSchedule?: RecurringSchedule;
+	// For custom scheduling
+	customSchedule?: CustomSchedule;
+}
+
+export interface MultiChainScheduleResult {
+	success: boolean;
+	results: Record<string, ChainScheduleResult>;
+	totalSchedules: number;
+	successfulChains: number;
+	failedChains: number;
+	error?: string;
+}
+
+export interface ChainScheduleResult {
+	success: boolean;
+	scheduleIds?: string[];
+	txHashes?: string[];
+	scheduledTimes?: Date[];
+	error?: string;
+}

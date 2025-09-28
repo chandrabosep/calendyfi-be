@@ -178,15 +178,18 @@ async function testPriceTriggers() {
 		if (userTriggers.length > 0) {
 			console.log("\n8️⃣ Testing trigger cancellation...");
 			const triggerToCancel = userTriggers[0];
-			const cancelResult = await priceMonitorService.cancelPriceTrigger(
-				triggerToCancel.id,
-				testUserId
-			);
+			if (triggerToCancel) {
+				const cancelResult =
+					await priceMonitorService.cancelPriceTrigger(
+						triggerToCancel.id,
+						testUserId
+					);
 
-			if (cancelResult.success) {
-				console.log(
-					`✅ Cancelled trigger: ${triggerToCancel.fromToken} ${triggerToCancel.triggerType} $${triggerToCancel.targetPrice}`
-				);
+				if (cancelResult.success) {
+					console.log(
+						`✅ Cancelled trigger: ${triggerToCancel.fromToken} ${triggerToCancel.triggerType} $${triggerToCancel.targetPrice}`
+					);
+				}
 			} else {
 				console.log("❌ Failed to cancel trigger:", cancelResult.error);
 			}

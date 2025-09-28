@@ -106,7 +106,8 @@ router.post(
 
 			// Validate chains are available
 			const unavailableChains = request.chains.filter(
-				(chainId) => !multiChainScheduler.isChainAvailable(chainId)
+				(chainId: number) =>
+					!multiChainScheduler.isChainAvailable(chainId)
 			);
 
 			if (unavailableChains.length > 0) {
@@ -137,7 +138,9 @@ router.post(
 				if (
 					chainResult.success &&
 					chainResult.scheduleIds &&
-					chainResult.scheduledTimes
+					chainResult.scheduledTimes &&
+					chainResult.scheduleIds.length ===
+						chainResult.scheduledTimes.length
 				) {
 					try {
 						for (
@@ -145,30 +148,32 @@ router.post(
 							i < chainResult.scheduleIds.length;
 							i++
 						) {
-							await prisma.flowScheduledPayment.create({
-								data: {
-									scheduleId: chainResult.scheduleIds[i],
-									userId: request.userId,
-									recipient: request.recipient,
-									amount: request.amount,
-									delaySeconds: Math.floor(
-										(chainResult.scheduledTimes[
-											i
-										].getTime() -
-											Date.now()) /
-											1000
-									),
-									scheduledTime:
-										chainResult.scheduledTimes[i],
-									method: "multi-chain",
-									evmTxHash: chainResult.txHashes?.[i],
-									eventId: request.eventId,
-									description:
-										request.description ||
-										`Multi-chain schedule on chain ${chainId}`,
-									executed: false,
-								},
-							});
+							const scheduleId = chainResult.scheduleIds[i];
+							const scheduledTime = chainResult.scheduledTimes[i];
+
+							if (scheduleId && scheduledTime) {
+								await prisma.flowScheduledPayment.create({
+									data: {
+										scheduleId,
+										userId: request.userId,
+										recipient: request.recipient,
+										amount: request.amount,
+										delaySeconds: Math.floor(
+											(scheduledTime.getTime() -
+												Date.now()) /
+												1000
+										),
+										scheduledTime,
+										method: "multi-chain",
+										evmTxHash: chainResult.txHashes?.[i],
+										eventId: request.eventId,
+										description:
+											request.description ||
+											`Multi-chain schedule on chain ${chainId}`,
+										executed: false,
+									},
+								});
+							}
 						}
 					} catch (dbError) {
 						console.warn(
@@ -260,7 +265,8 @@ router.post(
 
 			// Validate chains are available
 			const unavailableChains = chains.filter(
-				(chainId) => !multiChainScheduler.isChainAvailable(chainId)
+				(chainId: number) =>
+					!multiChainScheduler.isChainAvailable(chainId)
 			);
 
 			if (unavailableChains.length > 0) {
@@ -295,7 +301,9 @@ router.post(
 				if (
 					chainResult.success &&
 					chainResult.scheduleIds &&
-					chainResult.scheduledTimes
+					chainResult.scheduledTimes &&
+					chainResult.scheduleIds.length ===
+						chainResult.scheduledTimes.length
 				) {
 					try {
 						for (
@@ -303,30 +311,32 @@ router.post(
 							i < chainResult.scheduleIds.length;
 							i++
 						) {
-							await prisma.flowScheduledPayment.create({
-								data: {
-									scheduleId: chainResult.scheduleIds[i],
-									userId,
-									recipient,
-									amount,
-									delaySeconds: Math.floor(
-										(chainResult.scheduledTimes[
-											i
-										].getTime() -
-											Date.now()) /
-											1000
-									),
-									scheduledTime:
-										chainResult.scheduledTimes[i],
-									method: "multi-chain",
-									evmTxHash: chainResult.txHashes?.[i],
-									eventId,
-									description:
-										description ||
-										`Pattern: ${pattern} on chain ${chainId}`,
-									executed: false,
-								},
-							});
+							const scheduleId = chainResult.scheduleIds[i];
+							const scheduledTime = chainResult.scheduledTimes[i];
+
+							if (scheduleId && scheduledTime) {
+								await prisma.flowScheduledPayment.create({
+									data: {
+										scheduleId,
+										userId,
+										recipient,
+										amount,
+										delaySeconds: Math.floor(
+											(scheduledTime.getTime() -
+												Date.now()) /
+												1000
+										),
+										scheduledTime,
+										method: "multi-chain",
+										evmTxHash: chainResult.txHashes?.[i],
+										eventId,
+										description:
+											description ||
+											`Pattern: ${pattern} on chain ${chainId}`,
+										executed: false,
+									},
+								});
+							}
 						}
 					} catch (dbError) {
 						console.warn(
@@ -407,7 +417,22 @@ router.get("/available-chains", async (req: Request, res: Response) => {
  */
 router.get("/check-chain/:chainId", async (req: Request, res: Response) => {
 	try {
-		const chainId = parseInt(req.params.chainId);
+		const chainIdParam = req.params.chainId;
+		if (!chainIdParam) {
+			return res.status(400).json({
+				success: false,
+				error: "Chain ID parameter is required",
+			} as ApiResponse);
+		}
+
+		const chainId = parseInt(chainIdParam);
+		if (isNaN(chainId)) {
+			return res.status(400).json({
+				success: false,
+				error: "Invalid chain ID",
+			} as ApiResponse);
+		}
+
 		const isAvailable = multiChainScheduler.isChainAvailable(chainId);
 
 		return res.json({
@@ -430,4 +455,3 @@ router.get("/check-chain/:chainId", async (req: Request, res: Response) => {
 });
 
 export default router;
-

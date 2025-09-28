@@ -297,6 +297,13 @@ router.get(
 
 			console.info("Fetching payments for recipient", { address });
 
+			if (!address) {
+				return res.status(400).json({
+					success: false,
+					error: "Address parameter is required",
+				} as ApiResponse);
+			}
+
 			const result =
 				await flowSchedulerService.getScheduledPaymentsForRecipient(
 					address
@@ -696,30 +703,39 @@ router.post(
 			}
 
 			// Store scheduled payments in database
-			if (result.scheduleIds && result.scheduledTimes) {
+			if (
+				result.scheduleIds &&
+				result.scheduledTimes &&
+				result.scheduleIds.length === result.scheduledTimes.length
+			) {
 				try {
 					for (let i = 0; i < result.scheduleIds.length; i++) {
-						await prisma.flowScheduledPayment.create({
-							data: {
-								scheduleId: result.scheduleIds[i],
-								userId: request.userId,
-								recipient: request.recipient,
-								amount: request.amount,
-								delaySeconds: Math.floor(
-									(result.scheduledTimes[i].getTime() -
-										Date.now()) /
-										1000
-								),
-								scheduledTime: result.scheduledTimes[i],
-								method: request.method || "evm",
-								evmTxHash: result.evmTxHashes?.[i] || undefined,
-								cadenceTxId:
-									result.cadenceTxIds?.[i] || undefined,
-								eventId: request.eventId,
-								description: request.description,
-								executed: false,
-							},
-						});
+						const scheduleId = result.scheduleIds[i];
+						const scheduledTime = result.scheduledTimes[i];
+
+						if (scheduleId && scheduledTime) {
+							await prisma.flowScheduledPayment.create({
+								data: {
+									scheduleId,
+									userId: request.userId,
+									recipient: request.recipient,
+									amount: request.amount,
+									delaySeconds: Math.floor(
+										(scheduledTime.getTime() - Date.now()) /
+											1000
+									),
+									scheduledTime,
+									method: request.method || "evm",
+									evmTxHash:
+										result.evmTxHashes?.[i] || undefined,
+									cadenceTxId:
+										result.cadenceTxIds?.[i] || undefined,
+									eventId: request.eventId,
+									description: request.description,
+									executed: false,
+								},
+							});
+						}
 					}
 				} catch (dbError) {
 					console.warn(
@@ -829,31 +845,40 @@ router.post(
 			}
 
 			// Store scheduled payments in database
-			if (result.scheduleIds && result.scheduledTimes) {
+			if (
+				result.scheduleIds &&
+				result.scheduledTimes &&
+				result.scheduleIds.length === result.scheduledTimes.length
+			) {
 				try {
 					for (let i = 0; i < result.scheduleIds.length; i++) {
-						await prisma.flowScheduledPayment.create({
-							data: {
-								scheduleId: result.scheduleIds[i],
-								userId,
-								recipient,
-								amount,
-								delaySeconds: Math.floor(
-									(result.scheduledTimes[i].getTime() -
-										Date.now()) /
-										1000
-								),
-								scheduledTime: result.scheduledTimes[i],
-								method: method || "evm",
-								evmTxHash: result.evmTxHashes?.[i] || undefined,
-								cadenceTxId:
-									result.cadenceTxIds?.[i] || undefined,
-								eventId,
-								description:
-									description || `Pattern: ${pattern}`,
-								executed: false,
-							},
-						});
+						const scheduleId = result.scheduleIds[i];
+						const scheduledTime = result.scheduledTimes[i];
+
+						if (scheduleId && scheduledTime) {
+							await prisma.flowScheduledPayment.create({
+								data: {
+									scheduleId,
+									userId,
+									recipient,
+									amount,
+									delaySeconds: Math.floor(
+										(scheduledTime.getTime() - Date.now()) /
+											1000
+									),
+									scheduledTime,
+									method: method || "evm",
+									evmTxHash:
+										result.evmTxHashes?.[i] || undefined,
+									cadenceTxId:
+										result.cadenceTxIds?.[i] || undefined,
+									eventId,
+									description:
+										description || `Pattern: ${pattern}`,
+									executed: false,
+								},
+							});
+						}
 					}
 				} catch (dbError) {
 					console.warn(

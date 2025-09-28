@@ -23,12 +23,12 @@ async function testRealtimeData() {
 				console.log(`   ✅ ${symbol}: $${stockData.price}`);
 				console.log(`      Source: ${stockData.source}`);
 				console.log(`      Market: ${stockData.marketStatus}`);
-				console.log(`      Asset Type: ${stockData.assetType}`);
+				console.log(`      Asset Type: stock`);
 			} else {
 				console.log(`   ❌ ${symbol}: No data returned`);
 			}
 		} catch (error) {
-			console.log(`   ❌ ${symbol}: Error -`, error.message);
+			console.log(`   ❌ ${symbol}: Error -`, (error as Error).message);
 		}
 	}
 
@@ -47,12 +47,12 @@ async function testRealtimeData() {
 				console.log(`   ✅ ${symbol}: $${cryptoData.price}`);
 				console.log(`      Source: ${cryptoData.source}`);
 				console.log(`      Market: ${cryptoData.marketStatus}`);
-				console.log(`      Asset Type: ${cryptoData.assetType}`);
+				console.log(`      Asset Type: crypto`);
 			} else {
 				console.log(`   ❌ ${symbol}: No data returned`);
 			}
 		} catch (error) {
-			console.log(`   ❌ ${symbol}: Error -`, error.message);
+			console.log(`   ❌ ${symbol}: Error -`, (error as Error).message);
 		}
 	}
 
@@ -70,17 +70,18 @@ async function testRealtimeData() {
 		try {
 			console.log(`   🎯 Testing ${asset.symbol} (${asset.type})...`);
 
-			// Test price fetching through the monitor service
-			const result = await priceMonitorService.createPriceTrigger({
-				userId: "test-realtime-user",
-				triggerType: "above",
-				targetPrice: 1, // Low threshold to test data fetching
-				fromToken: asset.symbol,
-				toToken: "USDC",
-				amount: "1",
-				chainId: 11155111, // Sepolia
-				description: `Test ${asset.symbol} real-time data`,
-			});
+		// Test price fetching through the monitor service
+		const result = await priceMonitorService.createPriceTrigger({
+			userId: "test-realtime-user",
+			triggerType: "above",
+			targetPrice: 1, // Low threshold to test data fetching
+			fromToken: asset.symbol,
+			toToken: "USDC",
+			amount: "1",
+			chainId: 11155111, // Sepolia
+			description: `Test ${asset.symbol} real-time data`,
+			isActive: true,
+		});
 
 			if (result.success) {
 				console.log(`   ✅ ${asset.symbol}: Price monitoring active`);
@@ -98,7 +99,7 @@ async function testRealtimeData() {
 				console.log(`   ❌ ${asset.symbol}: ${result.error}`);
 			}
 		} catch (error) {
-			console.log(`   ❌ ${asset.symbol}: Error -`, error.message);
+			console.log(`   ❌ ${asset.symbol}: Error -`, (error as Error).message);
 		}
 	}
 
@@ -109,9 +110,9 @@ async function testRealtimeData() {
 		// Create a test trigger that should be immediately triggered
 		const ethPrice = await polygonService.getPrice("ETH", "crypto");
 		if (ethPrice && ethPrice.price) {
-			const currentPrice = parseFloat(
-				ethPrice.price.replace("$", "").replace(",", "")
-			);
+		const currentPrice = typeof ethPrice.price === 'number' ? ethPrice.price : parseFloat(
+			ethPrice.price.toString().replace("$", "").replace(",", "")
+		);
 			const triggerPrice = currentPrice - 1000; // Set trigger below current price
 
 			console.log(`   📊 Current ETH price: $${currentPrice}`);
@@ -119,16 +120,17 @@ async function testRealtimeData() {
 				`   🎯 Setting trigger at: $${triggerPrice} (should trigger immediately)`
 			);
 
-			const trigger = await priceMonitorService.createPriceTrigger({
-				userId: "test-realtime-user",
-				triggerType: "above",
-				targetPrice: triggerPrice,
-				fromToken: "ETH",
-				toToken: "USDC",
-				amount: "0.1",
-				chainId: 11155111,
-				description: "Real-time monitoring test",
-			});
+		const trigger = await priceMonitorService.createPriceTrigger({
+			userId: "test-realtime-user",
+			triggerType: "above",
+			targetPrice: triggerPrice,
+			fromToken: "ETH",
+			toToken: "USDC",
+			amount: "0.1",
+			chainId: 11155111,
+			description: "Real-time monitoring test",
+			isActive: true,
+		});
 
 			if (trigger.success && trigger.triggerId) {
 				console.log(`   ✅ Test trigger created: ${trigger.triggerId}`);
@@ -145,7 +147,7 @@ async function testRealtimeData() {
 			}
 		}
 	} catch (error) {
-		console.log(`   ❌ Real-time simulation failed:`, error.message);
+		console.log(`   ❌ Real-time simulation failed:`, (error as Error).message);
 	}
 
 	// Test 5: Data freshness and accuracy
@@ -179,7 +181,7 @@ async function testRealtimeData() {
 			}
 		}
 	} catch (error) {
-		console.log(`   ❌ Data freshness test failed:`, error.message);
+		console.log(`   ❌ Data freshness test failed:`, (error as Error).message);
 	}
 
 	console.log("\n📋 Real-Time Data Summary:");

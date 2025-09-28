@@ -380,6 +380,13 @@ function parseNaturalLanguageTrigger(text: string): {
 				// Default to Sepolia for now (can be enhanced to detect chain)
 				const chainId = 11155111;
 
+				if (!targetPrice || !fromToken || !toToken) {
+					return {
+						success: false,
+						error: "Missing required price trigger parameters",
+					};
+				}
+
 				return {
 					success: true,
 					trigger: {
